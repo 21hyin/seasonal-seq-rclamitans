@@ -1,0 +1,115 @@
+Code in this folder goes with the manuscript submission "Seasonal temperature 
+sequences drive divergent developmental trajectories in a species with an 
+extended breeding season".
+
+Note: opening .csv files in Excel may for some reason change date formats from 
+YYYY-MM-DD to m/d/YYYY. Either adjust code accordingly below, or open .csv 
+files in another program or a raw text file editor if deciding to view!
+
+
+RAW DATASETS
+Raw data all located in datasets/raw folder
+
+1. start_date_conditions.csv
+
+2. Seasonal air temperature transition times
+- springfall_temperature_daily_highlow.csv (not input for code, for reference)
+- summer_temperature_daily_highlow.csv (not input for code, for reference)
+- winter_temperature_weekly_highlow.csv
+
+3. sequence_schedules.csv
+
+4. Field data
+- rana_clamitans_nightlycalls.csv
+- leaves.csv
+- water_temperatures/field/*.csv
+- seasonal_field_photoperiod/*.txt
+- seasonal_field_air_temperature.csv
+
+5. Chamber water temperatures, including nine .csv files
+- water_temperatures/chamber/*
+
+6. Larvae
+- tadpoles_midcensus.csv
+- tadpoles_growth.csv
+- tadpoles_behavior/video_info.csv
+- tadpoles_behavior/startstop_times.csv
+
+7. metamorphosis.csv
+
+
+SOFTWARE REQUIREMENTS
+Tested with:
+
+1. Python version 3.8
+Published packages (outside standard library): jupyterlab (v3.4.5), 
+pandas (v2.0.3), numpy (v1.24.3), matplotlib (v3.6.0)
+
+2. R version 4.2.0
+Published packages: dplyr (v1.1.4), ggplot2 (v3.5.1), Hmisc (v5.1-2), 
+emmeans (v1.10.3), fitdistrplus (v1.1-11), bbmle (v1.0.25), lme4 (v1.1-34), 
+glmmTMB (v1.1.10), survival (v3.6-4), tramME (v1.0.7), multcomp (v1.4-26),  
+see (v0.11.0), car (v3.1-3), purrr (v1.0.2), corrplot (v0.92), vegan (v2.6-4),
+reshape2 (v1.4.4), brunnermunzel (v2.0), cowplot (v1.1.1)
+
+
+WORKFLOW WITH CODE
+Referring to input and output data in the datasets folder:
+
+sequence_schedules.R plots Figure 1 and prepares .csv files for analysis in 
+larvae_metamorphosis.R.
+Input data:
+- processed/sequence_temperature_to_plot.csv
+- processed/sequence_photoperiod_to_plot.csv
+Output data:
+- processed/temperature_sequence_seasonal_means.csv
+
+sequence_schedules.ipynb prepares .csv files to plot Figure 1 in 
+sequence_schedules.R.
+Input data:
+- raw/winter_temperature_weekly_highlow.csv
+Output:
+- processed/sequence_temperature_to_plot.csv
+- processed/sequence_photoperiod_to_plot.csv
+
+larvae_metamorphosis.R provides code for most data analysis and figures, 
+including all tables and figures in the main manuscript except for Figure 1.
+Input data: 
+- raw/tadpoles_midcensus.csv
+- raw/tadpoles_growth.csv
+- processed/tadpoles_behavior.csv
+- raw/metamorphosis.csv
+- raw/start_date_conditions.csv
+- processed/temperature_sequence_seasonal_means.csv
+- raw/sequence_schedules.csv
+- processed/sequence_temperature_to_plot.csv
+- processed/sequence_photoperiod_to_plot.csv
+
+video_coding_preprocess.ipynb processes raw data collected from 
+behavioral trials.
+Input data:
+- raw/tadpoles_behavior/video_info.csv
+- raw/tadpoles_behavior/startstop_times.csv
+Output data:
+- processed/tadpoles_behavior.csv
+
+field_to_lab.R plots Figures S1-S2 and Figure S5.
+Input data: 
+- raw/rana_clamitans_nightlycalls.csv
+- raw/leaves.csv
+- processed/chamber_water_temperature_HOBO.csv
+- processed/pond_water_temperature_p1_HOBO.csv
+- processed/pond_water_temperature_p4_HOBO.csv
+
+field_to_lab.ipynb plots Figures S3-S4 while preparing .csv files
+to plot in field_to_lab.R.
+Input data: 
+- raw/seasonal_field_photoperiod/ponds5-8_daylight_2001.txt
+- raw/seasonal_field_photoperiod/ponds5-8_darkness_2001.txt
+- raw/seasonal_field_air_temperature.csv
+- raw/water_temperatures/chamber/*
+- raw/water_temperatures/field/*
+Output data: 
+- processed/pond_water_temperature_p1_HOBO.csv
+- processed/pond_water_temperature_p4_HOBO.csv
+- processed/chamber_water_temperature_HOBO.csv
