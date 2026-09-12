@@ -17,13 +17,12 @@ library(emmeans) # version 1.10.3
 library(fitdistrplus) # version 1.1-11
 library(bbmle) # version 1.0.25
 library(lme4) # version 1.1-34
+library(performance) # version 0.15.3
 library(glmmTMB) # version 1.1.10
 library(survival) # version 3.6-4
 library(tramME) # version 1.0.7
-library(see) # version 0.11.0
 library(car) # version 3.1-3
 library(purrr) # version 1.0.2
-library(corrplot) # version 0.92
 library(reshape2) # version 1.4.4
 library(vegan) # version 2.6-4
 library(brunnermunzel) # version 2.0
@@ -80,19 +79,7 @@ mytheme <- theme(
     axis.line = element_line(colour = "black")
 )
 
-# df_group_char_bootcl() returns a data frame of means and confidence intervals
-#  at the level of ci for the data frame df column named by response and grouped
-#  by group in df
-#  returned data frame columns include:
-#   mean: mean of response for a group
-#   lwr: lower limit of confidence interval
-#   upr: upper limit of confidence interval
-df_group_char_bootcl <- function(df, group, response, ci = 0.95) {
-    stopifnot(is.character(group) && is.character(response))
-    return (setNames(bind_rows(lapply(split(df, df[, group]), function(x, y) {
-        return (data.frame(rbind(smean.cl.boot(x[y], conf.int = ci))))
-    }, y = response), .id = group), c(group, "mean","lwr","upr")))
-}
+mycolors <- c("#000000", "#F5C710", "#9753F5", "#009E73")
 
 # vec_group_char_bootcl() returns a data frame of means and confidence intervals
 #  at the level of ci given the input vector vec and corresponding grouping and
@@ -102,14 +89,14 @@ df_group_char_bootcl <- function(df, group, response, ci = 0.95) {
 #   lwr: lower limit of confidence interval
 #   upr: upper limit of confidence interval
 vec_group_char_bootcl <- function(vec, grouping, group_name, ci = 0.95) {
-    df_list <- tapply(
+    df_list <- c(tapply(
         vec,
         grouping,
         function(x) {
             return (data.frame(rbind(smean.cl.boot(x, conf.int = ci))))
         }
-    )
-    df <- bind_rows(df_list, .id = group_name)
+    ))
+    df <- dplyr::bind_rows(df_list, .id = group_name)
     df[, group_name] <- names(df_list)
     return (setNames(df, c(group_name, "mean","lwr","upr")))
 }
@@ -139,7 +126,38 @@ range_minmax <- function(x, range_min = 0, range_max = 1, ...) {
     ) + range_min)
 }
 
+set.seed(0)
+
 # Load & preprocess input data -------------------------------------------------
+# tank_meanbootcl_by_sequence() returns a data frame of means and confidence
+#  intervals of the response index at the level of ci given the input tank_data
+#  dataframe for each treatment of seasonal sequences
+#  returned data frame columns include:
+#   sequence: seasonal temperature x photoperiod sequence
+#   mean: mean of response for a group
+#   lwr: lower limit of confidence interval
+#   upr: upper limit of confidence interval
+#   ftreatment: sequence number
+#   temperature: temperature sequence
+#   photoperiod: photoperiod sequence
+tank_meanbootcl_by_sequence <- function(tank_data, response) {
+    stopifnot(is.character(response) || is.integer(response))
+    meanbootcl <- vec_group_char_bootcl(
+        unlist(tank_data[, response], use.names = FALSE),
+        interaction(
+            tank_data$temperature,
+            tank_data$photoperiod,
+            sep = " x ",
+            lex.order = TRUE
+        ),
+        "sequence"
+    )
+    meanbootcl$ftreatment <- as.factor(1:4)
+    meanbootcl$temperature <- sub("(\\w+)\\s(.*)$", "\\1", meanbootcl$sequence)
+    meanbootcl$photoperiod <- sub("(.*)\\s(\\w+)$", "\\2", meanbootcl$sequence)
+    return (meanbootcl)
+}
+
 # Starting husbandry dates & conditions
 HUSBANDRY <- read.csv(
     file.path(DATA_IN, "raw", "start_date_conditions.csv"),
@@ -200,7 +218,7 @@ larvae_growth <- mutate(
     num_individuals = n()
 )
 larvae_growth$wet_mass_mg <- larvae_growth$wet_mass_g * 1000
-larvae_growth$tail_to_mass <- larvae_growth$tail_length_mm / larvae_growth$wet_mass_mg
+larvae_growth$wet_mass_centered_scaled <- scale(larvae_growth$wet_mass_mg)
 larvae_growth_no_outlier <- larvae_growth[
     which(larvae_growth$wet_mass_mg != max(larvae_growth$wet_mass_mg)),
 ]
@@ -219,8 +237,7 @@ larvae_mass_by_tank <- larvae_mass_by_tank[, c(!(colnames(
     "wet_mass_mg",
     "wet_mass_g",
     "tail_length_mm",
-    "whole_body_length_mm",
-    "tail_to_mass"
+    "whole_body_length_mm"
 )))]
 larvae_mass_by_tank <- ungroup(larvae_mass_by_tank)
 larvae_mass_by_tank <- mutate(
@@ -229,8 +246,7 @@ larvae_mass_by_tank <- mutate(
 )
 larvae_morpho_by_tank <- distinct(mutate(
     group_by(larvae_growth, tank_id),
-    tail_length_mean_mm = mean(tail_length_mm, na.rm = TRUE),
-    tail_to_mass_mean = mean(tail_to_mass, na.rm = TRUE)
+    tail_length_mean = mean(tail_length_mm, na.rm = TRUE),
 ), tank_id, .keep_all = TRUE)
 larvae_morpho_by_tank <- larvae_morpho_by_tank[, c(!(colnames(
     larvae_morpho_by_tank
@@ -240,9 +256,9 @@ larvae_morpho_by_tank <- larvae_morpho_by_tank[, c(!(colnames(
     "twet_mass_date",
     "wet_mass_mg",
     "wet_mass_g",
+    "wet_mass_centered_scaled",
     "tail_length_mm",
-    "whole_body_length_mm",
-    "tail_to_mass"
+    "whole_body_length_mm"
 )))]
 larvae_morpho_by_tank <- ungroup(larvae_morpho_by_tank)
 larvae_morpho_by_tank <- mutate(
@@ -387,27 +403,25 @@ ungroup(metamorphosis)
 metamorphosis_complete <- metamorphosis[
     metamorphosis$life_stage == "complete",
 ]
-metamorphosis_complete <- mutate(
+days_since_start_by_tank <- summarise(group_by(
     metamorphosis_complete,
-    wet_mass_mg = wet_mass_g * 1000,
-    # choice of units aids model fitting
-    svl_to_mass = svl_mm / wet_mass_g,
-    # optional
-    svl_to_gape = svl_mm / gape_width_mm
-)
+    temperature,
+    photoperiod,
+    tank_id
+), days_since_start_mean = mean(days_since_start, na.rm = TRUE))
+metamorphosis_complete$wet_mass_mg <- metamorphosis_complete$wet_mass_g * 1000
 metamorphosis_mass_morpho <- metamorphosis_complete[
     metamorphosis_complete$date_euthanized != "died_before",
 ]
+metamorphosis_mass_morpho$wet_mass_centered_scaled <- scale(
+    metamorphosis_mass_morpho$wet_mass_g
+)
 metamorphosis_mass_morpho_by_tank <- distinct(mutate(
     group_by(metamorphosis_mass_morpho, tank_id),
     wetmass_mean = mean(wet_mass_mg, na.rm = TRUE),
-    svl_to_mass_mean = mean(svl_to_mass, na.rm = TRUE),
-    gape_mean = mean(gape_width_mm, na.rm = TRUE),
-    # optional
-    gape_to_mass_mean = mean(gape_width_mm / wet_mass_g, na.rm = TRUE),
     svl_mean = mean(svl_mm, na.rm = TRUE),
+    gape_mean = mean(gape_width_mm, na.rm = TRUE),
     tibiofibular_mean = mean(tibiofibular_length_mm, na.rm = TRUE),
-    svl_to_gape_mean = mean(svl_to_gape, na.rm = TRUE),
     days_since_start_mean = mean(days_since_start, na.rm = TRUE)
 ), tank_id, .keep_all = TRUE)
 metamorphosis_mass_morpho_by_tank <- metamorphosis_mass_morpho_by_tank[, c(!(
@@ -426,9 +440,6 @@ metamorphosis_mass_morpho_by_tank <- metamorphosis_mass_morpho_by_tank[, c(!(
         "svl_mm",
         "gape_width_mm",
         "tibiofibular_length_mm",
-        "svl_to_gape",
-        "svl_to_mass",
-        "leg_to_svl",
         "days_since_start"
     )
 ))]
@@ -551,200 +562,212 @@ names(photoperiod_sequence)[
     names(photoperiod_sequence) == "daylight_hours"
 ] <- "y_condition"
 
-# Exploratory data analysis: data distributions & model parameterization -------
-distr_list <- list(gamma = "gamma", norm = "normal", lnorm = "lognormal")
+# Survival (Fig. 2) ------------------------------------------------------------
+# show global average larval survivals
+mean(midcensus$prop_surv, na.rm = TRUE)
 
-# larval wet mass
-larvae_mass_fitdist <- vfitdist(
-    data = larvae_growth_no_outlier$wet_mass_mg,
-    distr = names(distr_list),
-    method = "mle",
-    lower = c(0, 0)
-)
-denscomp(
-    larvae_mass_fitdist,
-    xlim = c(0, 800),
-    xlab = "tadpole wet mass (mg)",
-    legendtext = paste(unlist(distr_list))
-)
-qqcomp(larvae_mass_fitdist, legendtext = paste(unlist(distr_list)))
-cdfcomp(
-    larvae_mass_fitdist,
-    xlab = "tadpole wet mass (mg)",
-    legendtext = paste(unlist(distr_list))
-)
-gofstat(larvae_mass_fitdist)
-ICtab(
-    glmer(
-        wet_mass_mg ~ temperature*photoperiod + fclutch + (1 | tank_id),
-        data = larvae_growth_no_outlier,
-        family = Gamma(link = "identity"),
-        control = glmerControl(optimizer = "bobyqa")
-    ),
-    glmer(
-        wet_mass_mg ~ temperature*photoperiod + fpond + (1 | tank_id),
-        data = larvae_growth_no_outlier,
-        family = Gamma(link = "identity")
-    ),
-    glmer(
-        wet_mass_mg ~ temperature*photoperiod + (1 | tank_id),
-        data = larvae_growth_no_outlier,
-        family = Gamma(link = "identity")
-    ),
-    type = "AICc",
-    base = TRUE,
-    weights = TRUE,
-    logLik = TRUE,
-    nobs = nrow(larvae_growth_no_outlier)
+# show means and 95% CI by sequence for larval survivals
+midcensus_survival_meanbootcl <- tank_meanbootcl_by_sequence(
+    midcensus,
+    "prop_surv"
 )
 
-# coefficient of variation in larval wet mass
-larvae_mass_cv_fitdist <- vfitdist(
-    data = larvae_mass_by_tank$wetmass_cv,
-    distr = names(distr_list[1:2]),
-    method = "mle",
-    lower = c(0, 0)
+# show average survivals after metamorphosis
+summarise(
+    group_by(metamorphosis_survived_by_tank, temperature),
+    mean_prop_surv = mean(prop_surv, na.rm = TRUE)
 )
-# poor default starting values for lognormal distribution when set lower bounds
-#  for some odd reason
-larvae_mass_cv_lnorm_fit <- fitdist(
-    data = larvae_mass_by_tank$wetmass_cv,
-    distr = "lnorm",
-    method = "mle"
-)
-larvae_mass_cv_fitdist$lnorm <- larvae_mass_cv_lnorm_fit
-denscomp(
-    larvae_mass_cv_fitdist,
-    xlim = c(0, 1),
-    xlab = "tadpole wet mass coefficient of variation",
-    legendtext = paste(unlist(distr_list))
-)
-qqcomp(larvae_mass_cv_fitdist, legendtext = paste(unlist(distr_list)))
-cdfcomp(
-    larvae_mass_cv_fitdist,
-    xlab = "tadpole wet mass coefficient of variation",
-    legendtext = paste(unlist(distr_list))
-)
-gofstat(larvae_mass_cv_fitdist)
-ICtab(
-    lm(
-        log(wetmass_cv) ~ temperature*photoperiod + fclutch,
-        data = larvae_mass_by_tank,
-        weights = num_individuals,
-        singular.ok = FALSE
-    ),
-    lm(
-        log(wetmass_cv) ~ temperature*photoperiod + fpond,
-        data = larvae_mass_by_tank,
-        weights = num_individuals,
-        singular.ok = FALSE
-    ),
-    lm(
-        log(wetmass_cv) ~ temperature*photoperiod,
-        data = larvae_mass_by_tank,
-        weights = num_individuals,
-        singular.ok = FALSE
-    ),
-    type = "AICc",
-    base = TRUE,
-    weights = TRUE,
-    logLik = TRUE,
-    nobs = nrow(larvae_mass_by_tank)
+# show means and 95% CI by sequence after metamorphosis
+metamorphosis_survival_meanbootcl <- tank_meanbootcl_by_sequence(
+    metamorphosis_survived_by_tank,
+    "prop_surv"
 )
 
-# tail length
-larvae_tail_fitdist <- vfitdist(
-    data = larvae_growth$tail_length_mm,
-    distr = names(distr_list),
-    method = "mle",
-    lower = c(0, 0)
-)
-denscomp(
-    larvae_tail_fitdist,
-    xlab = "tail length (mm)",
-    legendtext = paste(unlist(distr_list))
-)
-qqcomp(larvae_tail_fitdist, legendtext = paste(unlist(distr_list)))
-cdfcomp(
-    larvae_tail_fitdist,
-    xlab = "tail length (mm)",
-    legendtext = paste(unlist(distr_list))
-)
-gofstat(larvae_tail_fitdist)
-ICtab(
-    lmer(
-        tail_length_mm ~ temperature*photoperiod + fclutch + (1 | tank_id),
-        data = larvae_growth,
-        REML = FALSE
-    ),
-    lmer(
-        tail_length_mm ~ temperature*photoperiod + fpond + (1 | tank_id),
-        data = larvae_growth,
-        REML = FALSE
-    ),
-    lmer(
-        tail_length_mm ~ temperature*photoperiod + (1 | tank_id),
-        data = larvae_growth,
-        REML = FALSE
-    ),
-    type = "AICc",
-    base = TRUE,
-    weights = TRUE,
-    logLik = TRUE,
-    nobs = nrow(larvae_growth)
-)
+# Figure 2 subplots to assemble on MS PowerPoint
 
-# ratio of tail length to mass
-larvae_tail_to_mass_fitdist <- vfitdist(
-    data = larvae_growth$tail_to_mass,
-    distr = names(distr_list[1:2]),
-    method = "mle",
-    lower = c(0, 0)
-)
-# poor default starting values for lognormal distribution when set lower bounds
-#  for some odd reason
-larvae_tail_to_mass_lnorm_fit <- fitdist(
-    data = larvae_growth$tail_to_mass,
-    distr = "lnorm",
-    method = "mle"
-)
-larvae_tail_to_mass_fitdist$lnorm <- larvae_tail_to_mass_lnorm_fit
-denscomp(
-    larvae_tail_to_mass_fitdist,
-    xlab = "tadpole tail to wet mass ratio",
-    legendtext = paste(unlist(distr_list))
-)
-qqcomp(larvae_tail_fitdist, legendtext = paste(unlist(distr_list)))
-cdfcomp(
-    larvae_tail_fitdist,
-    xlab = "tadpole tail to wet mass ratio",
-    legendtext = paste(unlist(distr_list))
-)
-gofstat(larvae_tail_to_mass_fitdist)
-ICtab(
-    lmer(
-        log(tail_to_mass) ~ temperature*photoperiod + fclutch + (1 | tank_id),
-        data = larvae_growth,
-        REML = FALSE
-    ),
-    lmer(
-        log(tail_to_mass) ~ temperature*photoperiod + fpond + (1 | tank_id),
-        data = larvae_growth,
-        REML = FALSE
-    ),
-    lmer(
-        log(tail_to_mass) ~ temperature*photoperiod + (1 | tank_id),
-        data = larvae_growth,
-        REML = FALSE
-    ),
-    type = "AICc",
-    base = TRUE,
-    weights = TRUE,
-    logLik = TRUE,
-    nobs = nrow(larvae_growth)
-)
+midcensus_survival_g <- ggplot() +
+    geom_point(
+        mapping = aes(
+            x = photoperiod,
+            y = prop_surv * 100,
+            shape = temperature,
+            color = interaction(
+                temperature,
+                photoperiod,
+                sep = " x ",
+                lex.order = TRUE
+            )
+        ),
+        data = midcensus,
+        alpha = 0.5,
+        stroke = 1.15,
+        position = position_jitterdodge(dodge.width = 0.18, seed = 0)
+    ) +
+    geom_line(
+        data = midcensus_survival_meanbootcl,
+        mapping = aes(
+            x = photoperiod,
+            y = mean * 100,
+            group = temperature
+        ),
+        position = position_dodge(width = 0.18),
+        color = "grey50",
+        alpha = 0.75
+    ) +
+    geom_pointrange(
+        data = midcensus_survival_meanbootcl,
+        mapping = aes(
+            x = photoperiod,
+            y = mean * 100,
+            ymin = lwr * 100,
+            ymax = upr * 100,
+            shape = temperature,
+            color = sequence
+        ),
+        position = position_dodge(width = 0.18),
+        show.legend = FALSE,
+        size = 0.9,
+        linewidth = 1.25,
+        alpha = 0.75
+    ) +
+    scale_shape_manual(values = c(16, 1)) +
+    scale_color_manual(values = mycolors, guide = "none") +
+    coord_cartesian(ylim = c(0, 100)) +
+    labs(
+        x = "Photoperiod sequence",
+        y = "% survived in tanks",
+        shape = "Temperature\nsequence"
+    ) +
+    mytheme +
+    theme(
+        plot.background = element_rect(fill = "transparent", color = NA),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.33)),
+        legend.title = element_text(size = rel(1.5), margin = margin(
+            0,
+            0,
+            0.5,
+            0,
+            unit = "cm"
+        )),
+        legend.text = element_blank(),
+        legend.key.spacing.y = unit(9, 'mm')
+    )
+walk(1:2, function(i, g = midcensus_survival_g) {
+    png_name <- paste0("figure_2a_", i, ".png")
+    png(
+        filename = file.path(DATA_OUT, png_name),
+        width = 1600,
+        height = 1000,
+        res = 300,
+        bg = "transparent"
+    )
+    print(g + guides(
+        shape = guide_legend(override.aes = list(color = c(
+            mycolors[i],
+            mycolors[i + 2]
+        ), size = 3.5, stroke = 1.15, alpha = 1))
+    ))
+    dev.off()
+})
+
+metamorphosis_survival_g <- ggplot() +
+    geom_point(
+        mapping = aes(
+            x = photoperiod,
+            y = prop_surv * 100,
+            shape = temperature,
+            color = interaction(
+                temperature,
+                photoperiod,
+                sep = " x ",
+                lex.order = TRUE
+            )
+        ),
+        data = metamorphosis_survived_by_tank,
+        alpha = 0.5,
+        stroke = 1.15,
+        position = position_jitterdodge(dodge.width = 0.18, seed = 0)
+    ) +
+    geom_line(
+        data = metamorphosis_survival_meanbootcl,
+        mapping = aes(
+            x = photoperiod,
+            y = mean * 100,
+            group = temperature
+        ),
+        position = position_dodge(width = 0.18),
+        color = "grey50",
+        alpha = 0.75
+    ) +
+    geom_pointrange(
+        data = metamorphosis_survival_meanbootcl,
+        mapping = aes(
+            x = photoperiod,
+            y = mean * 100,
+            ymin = lwr * 100,
+            ymax = upr * 100,
+            shape = temperature,
+            color = sequence
+        ),
+        position = position_dodge(width = 0.18),
+        show.legend = FALSE,
+        size = 0.9,
+        linewidth = 1.25,
+        alpha = 0.75
+    ) +
+    scale_shape_manual(values = c(17, 2)) +
+    scale_color_manual(values = mycolors, guide = "none") +
+    coord_cartesian(ylim = c(0, 100)) +
+    labs(
+        x = "Photoperiod sequence",
+        y = "% survived in tanks",
+        shape = "Temperature\nsequence"
+    ) +
+    mytheme +
+    theme(
+        plot.background = element_rect(fill = "transparent", color = NA),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.33)),
+        legend.title = element_text(size = rel(1.5), margin = margin(
+            0,
+            0,
+            0.5,
+            0,
+            unit = "cm"
+        )),
+        legend.text = element_blank(),
+        legend.key.spacing.y = unit(9, 'mm')
+    )
+walk(1:2, function(i, g = metamorphosis_survival_g) {
+    png_name <- paste0("figure_2b_", i, ".png")
+    png(
+        filename = file.path(DATA_OUT, png_name),
+        width = 1600,
+        height = 1000,
+        res = 300,
+        bg = "transparent"
+    )
+    print(g + guides(
+        shape = guide_legend(override.aes = list(color = c(
+            mycolors[i],
+            mycolors[i + 2]
+        ), size = 3.5, stroke = 1.15, alpha = 1))
+    ))
+    dev.off()
+})
+
+# Exploratory data analysis: data distributions --------------------------------
+# outlier in wet mass
+larvae_growth[
+    which(larvae_growth$wet_mass_mg == max(larvae_growth$wet_mass_mg)),
+    "wet_mass_mg"
+]
 
 # behavioral trials as larvae: probability of feeding
+# check lack of feeding activity in some treatments
 larvae_behavior_feed <- summarise(group_by(
     larvae_behavior,
     temperature,
@@ -790,11 +813,79 @@ ggplot(larvae_behavior_feed, aes(fblinded_sequence_number, prop_feed)) +
     ) +
     coord_flip()
 
-# survival through finishing metamorphosis but before euthanasia
-count(filter(
-    metamorphosis,
-    date_euthanized == "died_before" & life_stage == "complete"
-), temperature, photoperiod)
+# set up statistical distribution to test
+
+distr_list <- list(gamma = "gamma", norm = "normal", lnorm = "lognormal")
+
+# larval wet mass
+larvae_mass_fitdist <- vfitdist(
+    data = larvae_growth_no_outlier$wet_mass_mg,
+    distr = names(distr_list),
+    method = "mle",
+    lower = c(0, 0)
+)
+denscomp(
+    larvae_mass_fitdist,
+    xlim = c(0, 800),
+    xlab = "tadpole wet mass (mg)",
+    legendtext = paste(unlist(distr_list))
+)
+qqcomp(larvae_mass_fitdist, legendtext = paste(unlist(distr_list)))
+cdfcomp(
+    larvae_mass_fitdist,
+    xlab = "tadpole wet mass (mg)",
+    legendtext = paste(unlist(distr_list))
+)
+gofstat(larvae_mass_fitdist)
+
+# coefficient of variation in larval wet mass
+larvae_mass_cv_fitdist <- vfitdist(
+    data = larvae_mass_by_tank$wetmass_cv,
+    distr = names(distr_list[1:2]),
+    method = "mle",
+    lower = c(0, 0)
+)
+# poor default starting values for lognormal distribution when set lower bounds
+#  for some odd reason
+larvae_mass_cv_lnorm_fit <- fitdist(
+    data = larvae_mass_by_tank$wetmass_cv,
+    distr = "lnorm",
+    method = "mle"
+)
+larvae_mass_cv_fitdist$lnorm <- larvae_mass_cv_lnorm_fit
+denscomp(
+    larvae_mass_cv_fitdist,
+    xlim = c(0, 1),
+    xlab = "tadpole wet mass coefficient of variation",
+    legendtext = paste(unlist(distr_list))
+)
+qqcomp(larvae_mass_cv_fitdist, legendtext = paste(unlist(distr_list)))
+cdfcomp(
+    larvae_mass_cv_fitdist,
+    xlab = "tadpole wet mass coefficient of variation",
+    legendtext = paste(unlist(distr_list))
+)
+gofstat(larvae_mass_cv_fitdist)
+
+# tail length
+tail_fitdist <- vfitdist(
+    data = larvae_growth$tail_length_mm,
+    distr = names(distr_list),
+    method = "mle",
+    lower = c(0, 0)
+)
+denscomp(
+    tail_fitdist,
+    xlab = "tail length (mm)",
+    legendtext = paste(unlist(distr_list))
+)
+qqcomp(tail_fitdist, legendtext = paste(unlist(distr_list)))
+cdfcomp(
+    tail_fitdist,
+    xlab = "tail length (mm)",
+    legendtext = paste(unlist(distr_list))
+)
+gofstat(tail_fitdist)
 
 # wet mass after metamorphosis
 metamorphosis_mass_fitdist <- vfitdist(
@@ -823,75 +914,28 @@ cdfcomp(
     legendtext = paste(unlist(distr_list))
 )
 gofstat(metamorphosis_mass_fitdist)
-ICtab(
-    lmer(
-        log(wet_mass_g) ~ temperature*photoperiod + fclutch + (1 | tank_id),
-        data = metamorphosis_complete,
-        REML = FALSE
-    ),
-    lmer(
-        log(wet_mass_g) ~ temperature*photoperiod + fpond + (1 | tank_id),
-        data = metamorphosis_complete,
-        REML = FALSE
-    ),
-    lmer(
-        log(wet_mass_g) ~ temperature*photoperiod + (1 | tank_id),
-        data = metamorphosis_complete,
-        REML = FALSE
-    ),
-    type = "AICc",
-    base = TRUE,
-    weights = TRUE,
-    logLik = TRUE,
-    nobs = nrow(metamorphosis_complete)
-)
 
-# ratio of SVL to mass
-metamorphosis_svl_to_mass_fitdist <- vfitdist(
-    data = metamorphosis_mass_morpho$svl_to_mass,
+# SVL after metamorphosis
+metamorphosis_svl_fitdist <- vfitdist(
+    data = metamorphosis_mass_morpho$svl_mm,
     distr = names(distr_list),
     method = "mle",
     lower = c(0, 0)
 )
 denscomp(
-    metamorphosis_svl_to_mass_fitdist,
-    xlab = "svl to wet mass ratio after metamorphosis",
+    metamorphosis_svl_fitdist,
+    xlab = "svl after metamorphosis",
     legendtext = paste(unlist(distr_list))
 )
-qqcomp(metamorphosis_svl_to_mass_fitdist, legendtext = paste(unlist(
+qqcomp(metamorphosis_svl_fitdist, legendtext = paste(unlist(
     distr_list
 )))
 cdfcomp(
-    metamorphosis_svl_to_mass_fitdist,
-    xlab = "svl to wet mass ratio after metamorphosis",
+    metamorphosis_svl_fitdist,
+    xlab = "svl after metamorphosis",
     legendtext = paste(unlist(distr_list))
 )
-gofstat(metamorphosis_svl_to_mass_fitdist)
-ICtab(
-    glmer(
-        svl_to_mass ~ temperature*photoperiod + fclutch + (1 | tank_id),
-        data = metamorphosis_mass_morpho,
-        family = Gamma(link = "identity"),
-        control = glmerControl(optimizer = "bobyqa")
-    ),
-    glmer(
-        svl_to_mass ~ temperature*photoperiod + fpond + (1 | tank_id),
-        data = metamorphosis_mass_morpho,
-        family = Gamma(link = "identity"),
-        control = glmerControl(optimizer = "bobyqa")
-    ),
-    glmer(
-        svl_to_mass ~ temperature*photoperiod + (1 | tank_id),
-        data = metamorphosis_mass_morpho,
-        family = Gamma(link = "identity"),
-        control = glmerControl(optimizer = "bobyqa")
-    ),
-    type = "AICc",
-    base = TRUE,
-    weights = TRUE,
-    logLik = TRUE,
-    nobs = nrow(metamorphosis_mass_morpho)
-)
+gofstat(metamorphosis_svl_fitdist)
 
 # gape width
 metamorphosis_gape_width_fitdist <- vfitdist(
@@ -914,457 +958,105 @@ cdfcomp(
     legendtext = paste(unlist(distr_list))
 )
 gofstat(metamorphosis_gape_width_fitdist)
-ICtab(
-    lmer(
-        log(gape_width_mm) ~ temperature*photoperiod + fclutch + (1 | tank_id),
-        data = metamorphosis_mass_morpho,
-        REML = FALSE
-    ),
-    lmer(
-        log(gape_width_mm) ~ temperature*photoperiod + fpond + (1 | tank_id),
-        data = metamorphosis_mass_morpho,
-        REML = FALSE
-    ),
-    lmer(
-        log(gape_width_mm) ~ temperature*photoperiod + (1 | tank_id),
-        data = metamorphosis_mass_morpho,
-        REML = FALSE
-    ),
-    type = "AICc",
-    base = TRUE,
-    weights = TRUE,
-    logLik = TRUE,
-    nobs = nrow(metamorphosis_mass_morpho)
-)
 
-# gape width to mass
-metamorphosis_gape_width_to_mass_fitdist <- vfitdist(
-    data = metamorphosis_mass_morpho$gape_width_mm / metamorphosis_mass_morpho$wet_mass_g,
+# tibiofibular length
+leg_fitdist <- vfitdist(
+    data = metamorphosis_mass_morpho$tibiofibular_length_mm,
     distr = names(distr_list),
     method = "mle",
     lower = c(0, 0)
 )
 denscomp(
-    metamorphosis_gape_width_to_mass_fitdist,
-    xlab = "gape width to mass ratio (mm:g)",
+    leg_fitdist,
+    xlab = "tibiofibular length (mm)",
     legendtext = paste(unlist(distr_list))
 )
-qqcomp(metamorphosis_gape_width_to_mass_fitdist, legendtext = paste(unlist(
+qqcomp(leg_fitdist, legendtext = paste(unlist(
     distr_list
 )))
 cdfcomp(
-    metamorphosis_gape_width_to_mass_fitdist,
-    xlab = "gape width to mass ratio (mm:g)",
+    leg_fitdist,
+    xlab = "tibiofibular length (mm)",
     legendtext = paste(unlist(distr_list))
 )
-gofstat(metamorphosis_gape_width_to_mass_fitdist)
-ICtab(
-    # singular
-    glmer(
-        gape_width_mm / wet_mass_g ~ temperature*photoperiod + fclutch + (1 | tank_id),
-        data = metamorphosis_mass_morpho,
-        family = Gamma(link = "identity")
-    ),
-    glmer(
-        gape_width_mm / wet_mass_g ~ temperature*photoperiod + fpond + (1 | tank_id),
-        data = metamorphosis_mass_morpho,
-        family = Gamma(link = "identity")
-    ),
-    glmer(
-        gape_width_mm / wet_mass_g ~ temperature*photoperiod + (1 | tank_id),
-        data = metamorphosis_mass_morpho,
-        family = Gamma(link = "identity")
-    ),
-    type = "AICc",
-    base = TRUE,
-    weights = TRUE,
-    logLik = TRUE,
-    nobs = nrow(metamorphosis_mass_morpho)
-)
+gofstat(leg_fitdist)
 
-# Survival (Fig. 2) ------------------------------------------------------------
-# show average larval survivals
-mean(midcensus$prop_surv, na.rm = TRUE)
-summarise(
-    group_by(midcensus, temperature, photoperiod),
-    mean_prop_surv = mean(prop_surv, na.rm = TRUE)
-)
+# individuals finished metamorphosis but died unexpectedly before euthanasia
+count(filter(
+    metamorphosis,
+    date_euthanized == "died_before" & life_stage == "complete"
+), temperature, photoperiod)
 
-# show average survivals after metamorphosis
-summarise(
-    group_by(metamorphosis_survived_by_tank, temperature),
-    mean_prop_surv = mean(prop_surv, na.rm = TRUE)
-)
-
-# Figure 2 subplots to assemble on MS PowerPoint
-
-# Figure 2a
-png(
-    filename = file.path(DATA_OUT, "figure_2a.png"),
-    width = 1600,
-    height = 1000,
-    res = 300,
-    bg = "transparent"
-)
-ggplot(midcensus, aes(
-    x = ftreatment,
-    y = prop_surv * 100,
-    colour = ftreatment
-)) +
-    geom_point(
-        alpha = 0.5,
-        position = position_jitterdodge(seed = 0),
-        shape = 16
-    ) +
-    stat_summary(
-        geom = "pointrange",
-        fun.data = mean_cl_boot,
-        position = position_jitterdodge(jitter.width = 0, seed = 0),
-        alpha = 0.5,
-        shape = 16,
-        size = 1,
-        linewidth = 1
-    ) +
-    scale_colour_manual(values = c(
-        "1" = unname(palette.colors())[1],
-        "2" = unname(palette.colors())[2],
-        "3" = unname(palette.colors())[3],
-        "4" = unname(palette.colors())[4]
-    )) +
-    guides(colour = "none") +
-    coord_cartesian(ylim = c(0, 100)) +
-    labs(
-        x = "Temperature x photoperiod sequence",
-        y = "% survived in tanks"
-    ) +
-    mytheme +
-    theme(
-        plot.background = element_rect(fill = "transparent", color = NA),
-        axis.text = element_text(size = rel(1.2)),
-        axis.text.y = element_text(size = rel(1.1)),
-        axis.title = element_text(size = rel(1.5))
-    )
-dev.off()
-
-# Figure 2b
-prop_surv_temperature_diffs_larvae <- bind_rows(lapply(
-    split(midcensus, midcensus$photoperiod), function(x) {
-        combs <- expand.grid(
-            unname(unlist(c(x[x$temperature == "late", "prop_surv"]))),
-            unname(unlist(c(x[x$temperature == "early", "prop_surv"])))
-        )
-        colnames(combs) <- c("late_prop_surv", "early_prop_surv")
-        df <- data.frame(combs$late_prop_surv - combs$early_prop_surv)
-        df$photoperiod <- x$photoperiod[1]
-        colnames(df) <- c("prop_surv_temperature_diff", "photoperiod")
-        return (df)
-    }
-))
-png(
-    filename = file.path(DATA_OUT, "figure_2b.png"),
-    width = 825,
-    height = 1000,
-    res = 300,
-    bg = "transparent"
-)
-ggplot(
-    data = prop_surv_temperature_diffs_larvae,
-    mapping = aes(x = photoperiod, y = prop_surv_temperature_diff * 100)
-) +
-    geom_violinhalf(
-        scale = "width",
-        width = 0.5,
-        color = "gray40",
-        alpha = 0,
-        position = position_nudge(x = 0.2)
-    ) +
-    geom_point(alpha = 0.33, position = position_jitter(
-        width = 0.05,
-        height = 0,
-        seed = 0
-    )) +
-    stat_summary(
-        geom = "pointrange",
-        fun.data = mean_cl_boot,
-        linewidth = 1,
-        position = position_nudge(x = 0.2)
-    ) +
-    geom_hline(yintercept = 0, linetype = 2) +
-    labs(
-        x = "\nphotoperiod sequence",
-        y = "difference in % survived between temperature sequences"
-    ) +
-    scale_y_continuous(breaks = seq(-50, 100, 25)) +
-    coord_cartesian(ylim = c(-50, 100)) +
-    mytheme +
-    theme(
-        plot.background = element_rect(fill = "transparent", color = NA),
-        axis.text = element_text(size = rel(1.2)),
-        axis.title = element_text(size = rel(1.5))
-    )
-dev.off()
-
-# Figure 2c
-prop_surv_photoperiod_diffs_larvae <- bind_rows(lapply(
-    split(midcensus, midcensus$temperature), function(x) {
-        combs <- expand.grid(
-            unname(unlist(c(x[x$photoperiod == "late", "prop_surv"]))),
-            unname(unlist(c(x[x$photoperiod == "early", "prop_surv"])))
-        )
-        colnames(combs) <- c("late_prop_surv", "early_prop_surv")
-        df <- data.frame(combs$late_prop_surv - combs$early_prop_surv)
-        df$temperature <- x$temperature[1]
-        colnames(df) <- c("prop_surv_photoperiod_diff", "temperature")
-        return (df)
-    }
-))
-png(
-    filename = file.path(DATA_OUT, "figure_2c.png"),
-    width = 825,
-    height = 1000,
-    res = 300,
-    bg = "transparent"
-)
-ggplot(
-    data = prop_surv_photoperiod_diffs_larvae,
-    mapping = aes(x = temperature, y = prop_surv_photoperiod_diff * 100)
-) +
-    geom_violinhalf(
-        scale = "width",
-        width = 0.5,
-        color = "gray40",
-        alpha = 0,
-        position = position_nudge(x = 0.2)
-    ) +
-    geom_point(
-        alpha = 0.33,
-        position = position_jitter(width = 0.05, height = 0, seed = 0)
-    ) +
-    stat_summary(
-        geom = "pointrange",
-        fun.data = mean_cl_boot,
-        linewidth = 1,
-        position = position_nudge(x = 0.2)
-    ) +
-    geom_hline(yintercept = 0, linetype = 2) +
-    labs(
-        x = "\ntemperature sequence",
-        y = "difference in % survived between photoperiod sequences"
-    ) +
-    scale_y_continuous(breaks = seq(-50, 100, 25)) +
-    coord_cartesian(ylim = c(-50, 100)) +
-    mytheme +
-    theme(
-        plot.background = element_rect(fill = "transparent", color = NA),
-        axis.text = element_text(size = rel(1.2)),
-        axis.title = element_text(size = rel(1.5))
-    )
-dev.off()
-
-# Figure 2d
-png(
-    filename = file.path(DATA_OUT, "figure_2d.png"),
-    width = 1600,
-    height = 1000,
-    res = 300,
-    bg = "transparent"
-)
-ggplot(metamorphosis_survived_by_tank, aes(
-    x = ftreatment,
-    y = prop_surv * 100,
-    colour = ftreatment
-)) +
-    geom_point(
-        alpha = 0.5,
-        shape = 17,
-        position = position_jitterdodge(seed = 0)
-    ) +
-    stat_summary(
-        geom = "pointrange",
-        fun.data = mean_cl_boot,
-        position = position_jitterdodge(jitter.width = 0, seed = 0),
-        alpha = 0.5,
-        shape = 17,
-        size = 1,
-        linewidth = 1
-    ) +
-    scale_colour_manual(values = c(
-        "1" = unname(palette.colors())[1],
-        "2" = unname(palette.colors())[2],
-        "3" = unname(palette.colors())[3],
-        "4" = unname(palette.colors())[4]
-    )) +
-    guides(colour = "none") +
-    coord_cartesian(ylim = c(0, 100)) +
-    labs(
-        x = "Temperature x photoperiod sequence",
-        y = "% survived in tanks"
-    ) +
-    mytheme +
-    theme(
-        plot.background = element_rect(fill = "transparent", color = NA),
-        axis.text = element_text(size = rel(1.2)),
-        axis.text.y = element_text(size = rel(1.1)),
-        axis.title = element_text(size = rel(1.5))
-    )
-dev.off()
-
-# Figure 2e
-prop_surv_temperature_diffs_metamorphosis <- bind_rows(lapply(
-    split(
-        metamorphosis_survived_by_tank,
-        metamorphosis_survived_by_tank$photoperiod
-    ), function(x) {
-        combs <- expand.grid(
-            unname(unlist(c(x[x$temperature == "late", "prop_surv"]))),
-            unname(unlist(c(x[x$temperature == "early", "prop_surv"])))
-        )
-        colnames(combs) <- c("late_prop_surv", "early_prop_surv")
-        df <- data.frame(combs$late_prop_surv - combs$early_prop_surv)
-        df$photoperiod <- x$photoperiod[1]
-        colnames(df) <- c("prop_surv_temperature_diff", "photoperiod")
-        return (df)
-    }
-))
-png(
-    filename = file.path(DATA_OUT, "figure_2e.png"),
-    width = 900,
-    height = 1000,
-    res = 300,
-    bg = "transparent"
-)
-ggplot(
-    data = prop_surv_temperature_diffs_metamorphosis,
-    mapping = aes(x = photoperiod, y = prop_surv_temperature_diff * 100)
-) +
-    geom_violinhalf(
-        scale = "width",
-        width = 0.5,
-        alpha = 0,
-        color = "gray40",
-        position = position_nudge(x = 0.2)
-    ) +
-    geom_point(
-        alpha = 0.33,
-        shape = 17,
-        position = position_jitter(width = 0.05, height = 0, seed = 0)
-    ) +
-    stat_summary(
-        geom = "pointrange",
-        fun.data = mean_cl_boot,
-        shape = 17,
-        linewidth = 1,
-        position = position_nudge(x = 0.2)
-    ) +
-    geom_hline(yintercept = 0, linetype = 2) +
-    scale_y_continuous(breaks = seq(-50, 100, 25)) +
-    coord_cartesian(ylim = c(-50, 100)) +
-    labs(
-        x = "photoperiod sequence",
-        y = "difference in % survived between temperature sequences"
-    ) +
-    mytheme +
-    theme(
-        plot.background = element_rect(fill = "transparent", color = NA),
-        axis.title = element_text(size = rel(1.5)),
-        axis.text = element_text(size = rel(1.3))
-    )
-dev.off()
-
-# Figure 2f
-prop_surv_photoperiod_diffs_metamorphosis <- bind_rows(lapply(
-    split(
-        metamorphosis_survived_by_tank,
-        metamorphosis_survived_by_tank$temperature
-    ), function(x) {
-        combs <- expand.grid(
-            unname(unlist(c(x[x$photoperiod == "late", "prop_surv"]))),
-            unname(unlist(c(x[x$photoperiod == "early", "prop_surv"])))
-        )
-        colnames(combs) <- c("late_prop_surv", "early_prop_surv")
-        df <- data.frame(combs$late_prop_surv - combs$early_prop_surv)
-        df$temperature <- x$temperature[1]
-        colnames(df) <- c("prop_surv_photoperiod_diff", "temperature")
-        return (df)
-    }
-))
-png(
-    filename = file.path(DATA_OUT, "figure_2f.png"),
-    width = 825,
-    height = 1000,
-    res = 300,
-    bg = "transparent"
-)
-ggplot(
-    data = prop_surv_photoperiod_diffs_metamorphosis,
-    mapping = aes(x = temperature, y = prop_surv_photoperiod_diff * 100)
-) +
-    geom_violinhalf(
-        scale = "width",
-        width = 0.5,
-        alpha = 0,
-        color = "gray40",
-        position = position_nudge(x = 0.2)
-    ) +
-    geom_point(
-        alpha = 0.33,
-        shape = 17,
-        position = position_jitter(width = 0.05, height = 0, seed = 0)
-    ) +
-    stat_summary(
-        geom = "pointrange",
-        fun.data = mean_cl_boot,
-        shape = 17,
-        linewidth = 1,
-        position = position_nudge(x = 0.2)
-    ) +
-    geom_hline(yintercept = 0, linetype = 2) +
-    labs(
-        x = "\ntemperature sequence",
-        y = "difference in % survived between photoperiod sequences"
-    ) +
-    coord_cartesian(ylim = c(-50, 100)) +
-    scale_y_continuous(breaks = seq(-50, 100, 25)) +
-    mytheme +
-    theme(
-        plot.background = element_rect(fill = "transparent", color = NA),
-        axis.text = element_text(size = rel(1.2)),
-        axis.title = element_text(size = rel(1.5))
-    )
-dev.off()
-
-# Growth (Table 1, Fig. 3, Fig. S8) --------------------------------------------
-# analyses for Table 1: larvae ~1.5mo into experiment
-
-contr.treatment(levels(larvae_growth$temperature))
-contr.treatment(levels(larvae_growth$photoperiod))
-contr.sum(levels(larvae_growth$temperature))
-contr.sum(levels(larvae_growth$photoperiod))
-
-# outlier in wet mass
-larvae_growth[
-    which(larvae_growth$wet_mass_mg == max(larvae_growth$wet_mass_mg)),
-    "wet_mass_mg"
-]
-# test model for wet mass
-m_larvae_mass <- glmer(
-    wet_mass_mg ~ temperature*photoperiod + (1 | tank_id),
-    data = larvae_growth_no_outlier,
-    family = Gamma(link = "identity"),
-    contrasts = list(temperature = contr.sum, photoperiod = contr.sum)
-)
-Anova(m_larvae_mass, type = "III")
-m_larvae_mass <- update(
-    m_larvae_mass,
-    . ~ . - temperature:photoperiod,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment
-    )
-)
-Anova(m_larvae_mass, type = "II")
+# Growth (Table 1, Fig. 3, Table S1, Table S3, Table S5 & stats) ---------------
 # global mean wet mass and 95% CI
-smean.cl.boot(larvae_growth_no_outlier$wet_mass_mg)
+smean.cl.boot(larvae_mass_by_tank$wetmass_mean)
+
+# global mean tail length and 95% CI
+smean.cl.boot(larvae_morpho_by_tank$tail_length_mean)
+
+# models
+
+# number of tanks
+length(unique(larvae_growth_no_outlier$tank_id))
+length(unique(larvae_growth$tank_id))
+length(unique(metamorphosis_mass_morpho$tank_id))
+
+m_base_growth <- list(
+    larvae_mass = glmer(
+        wet_mass_mg ~ temperature*photoperiod + (1 | tank_id),
+        data = larvae_growth_no_outlier,
+        family = Gamma(link = "identity"),
+        contrasts = list(temperature = contr.sum, photoperiod = contr.sum)
+    ),
+    tail_relative = lmer(
+        tail_length_mm ~ temperature*photoperiod + wet_mass_centered_scaled + (1 | tank_id),
+        data = larvae_growth,
+        REML = FALSE,
+        contrasts = list(temperature = contr.sum, photoperiod = contr.sum)
+    ),
+    metamorphosis_mass = lmer(
+        log(wet_mass_mg) ~ temperature*photoperiod + (1 | tank_id),
+        data = metamorphosis_mass_morpho,
+        REML = FALSE,
+        contrasts = list(temperature = contr.sum, photoperiod = contr.sum)
+    ),
+    metamorphosis_svl_relative = lmer(
+        # wet mass in mg centered and scaled also works
+        # singular fits with clutch if uncentered
+        log(svl_mm) ~ temperature*photoperiod + wet_mass_centered_scaled + (1 | tank_id),
+        data = metamorphosis_mass_morpho,
+        REML = FALSE,
+        contrasts = list(temperature = contr.sum, photoperiod = contr.sum)
+    ),
+    gape = lmer(
+        log(gape_width_mm) ~ temperature*photoperiod + (1 | tank_id),
+        data = metamorphosis_mass_morpho,
+        REML = FALSE,
+        contrasts = list(temperature = contr.sum, photoperiod = contr.sum)
+    )
+    # singular fit
+    # leg_relative = lmer(
+    #     log(tibiofibular_length_mm) ~ temperature*photoperiod + wet_mass_centered_scaled + (1 | tank_id),
+    #     data = metamorphosis_mass_morpho,
+    #     REML = FALSE,
+    #     contrasts = list(temperature = contr.sum, photoperiod = contr.sum)
+    # )
+)
+
+# confirmed benefits of fitting with mass covariate
+iwalk(m_base_growth[c(2, 4)], function(m, name) {
+    print(name)
+    print(ICtab(
+        m,
+        update(m, . ~ . - wet_mass_centered_scaled),
+        type = "AICc",
+        base = TRUE,
+        weights = TRUE,
+        logLik = TRUE
+    ))
+})
+
+m_growth <- list()
 
 # test model for coefficient of variation of wet mass
 m_larvae_mass_cv <- lm(
@@ -1374,199 +1066,169 @@ m_larvae_mass_cv <- lm(
     singular.ok = FALSE,
     contrasts = list(temperature = contr.sum, photoperiod = contr.sum)
 )
+Anova(m_larvae_mass_cv, type = "III")
 Anova(m_larvae_mass_cv, type = "II")
 
-# test model for ratio of tail length to mass (mm:mg)
-m_larvae_tail_to_mass <- lmer(
-    log(tail_to_mass) ~ temperature*photoperiod + fclutch + (
-        1 | tank_id
-    ),
-    data = larvae_growth,
-    REML = FALSE,
-    contrasts = list(
-        temperature = contr.sum,
-        photoperiod = contr.sum,
-        fclutch = contr.sum
-    )
+# analyses for Table 1, Table S1,
+#  effect sizes of significant terms and mass covariate
+
+contr.treatment(levels(larvae_growth$temperature))
+contr.treatment(levels(larvae_growth$photoperiod))
+contr.sum(levels(larvae_growth$temperature))
+contr.sum(levels(larvae_growth$photoperiod))
+
+# larval wet mass
+Anova(
+    # no need to rerun with type II if remove nonsignificant interactions anyway
+    #  for main results
+    m_base_growth$larvae_mass,
+    type = "III"
 )
-Anova(m_larvae_tail_to_mass, type = "III")
+Anova(
+    update(m_base_growth$larvae_mass,
+    . ~ . - temperature:photoperiod
+), type = "III")
+# exploratory models with clutch random intercept
+Anova(update(m_base_growth$larvae_mass, . ~ . + (1 | fclutch)), type = "III")
 Anova(update(
-    m_larvae_tail_to_mass,
-    . ~ . - temperature:photoperiod,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment,
-        fclutch = contr.treatment
-    )
-), type = "II")
-m_larvae_tail_to_mass <- update(
-    m_larvae_tail_to_mass,
-    . ~ . - temperature:photoperiod,
-    REML = TRUE,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment,
-        fclutch = contr.treatment
-    )
+    m_base_growth$larvae_mass,
+    . ~ . + (1 | fclutch) - temperature:photoperiod
+), type = "III")
+m_growth$larvae_mass <- update(
+    m_base_growth$larvae_mass,
+    . ~ . + (1 | fclutch) - temperature:photoperiod
 )
 
-# test model for tail length
-m_larvae_tail <- lmer(
-    tail_length_mm ~ temperature*photoperiod + (1 | tank_id),
-    data = larvae_growth,
-    REML = FALSE,
-    contrasts = list(temperature = contr.sum, photoperiod = contr.sum)
-)
-Anova(m_larvae_tail, type = "III")
+# relative tail length
+Anova(m_base_growth$tail_relative, type = "III")
 Anova(update(
-    m_larvae_tail,
-    . ~ . - temperature:photoperiod,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment
-    )
-), type = "II")
-m_larvae_tail <- update(
-    m_larvae_tail,
-    . ~ . - temperature:photoperiod,
-    REML = TRUE,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment
-    )
+    m_base_growth$tail_relative,
+    . ~ . - temperature:photoperiod
+), type = "III")
+# exploratory models with clutch random intercept
+Anova(update(m_base_growth$tail_relative, . ~ . + (1 | fclutch)), type = "III")
+icc(update(
+    m_base_growth$tail_relative,
+    . ~ . + (1 | fclutch),
+    REML = TRUE
+), by_group = TRUE)
+m_growth$tail_relative <- update(
+    m_base_growth$tail_relative,
+    . ~ . + (1 | fclutch),
+    REML = TRUE
 )
-# global mean tail length and 95% CI
-smean.cl.boot(larvae_growth$tail_length_mm)
-
-
-# analyses for Table 1 & effect sizes: after metamorphosis
+interaction.plot(
+    x.factor = larvae_growth$temperature,
+    trace.factor = larvae_growth$photoperiod,
+    response = larvae_growth$tail_length_mm,
+    type = "b",
+    trace.label = "photoperiod sequence",
+    fixed = TRUE,
+    pch = c(19, 17)
+)
+emmip(m_growth$tail_relative, photoperiod ~ temperature, CIs = TRUE) +
+    labs(
+        x = "Temperature sequence",
+        y = "Relative tail length (mm)",
+        color = "Photoperiod\nsequence"
+    ) +
+    coord_cartesian(ylim = c(16.5, 19.5)) +
+    scale_y_continuous(breaks = seq(from = 16.5, to = 19.5, by = 0.5)) +
+    mytheme +
+    theme(
+        axis.text = element_text(size = rel(1.25)),
+        axis.title = element_text(size = rel(1.25)),
+        legend.title = element_text(size = rel(1.25)),
+        legend.text = element_text(size = rel(1.25))
+    )
+# comes from one tank outlier using clutch random intercept
+Anova(update(
+    m_growth$tail_relative,
+    . ~ . + (1 | fclutch),
+    data = larvae_growth[larvae_growth$tank_id != larvae_morpho_by_tank[[which(
+        larvae_morpho_by_tank$tail_length_mean == max(
+            larvae_morpho_by_tank$tail_length_mean
+        )
+    ), "tank_id"]], ]
+), type = "III")
 
 contr.treatment(levels(metamorphosis_complete$temperature))
 contr.treatment(levels(metamorphosis_complete$photoperiod))
 contr.sum(levels(metamorphosis_complete$temperature))
 contr.sum(levels(metamorphosis_complete$photoperiod))
 
-# test model for wet mass
-m_metamorphosis_mass <- lmer(
-    log(wet_mass_mg) ~ temperature*photoperiod + fclutch + (1 | tank_id),
-    data = metamorphosis_mass_morpho,
-    REML = FALSE,
-    contrasts = list(
-        temperature = contr.sum,
-        photoperiod = contr.sum,
-        fclutch = contr.sum
-    )
-)
-# singular fit necessitates removal of clutch
-m_metamorphosis_mass <- update(
-    m_metamorphosis_mass,
-    . ~ . - fclutch,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment
-    )
-)
-Anova(m_metamorphosis_mass, type = "III")
+# wet mass after metamorphosis
+Anova(m_base_growth$metamorphosis_mass, type = "III")
 Anova(update(
-    m_metamorphosis_mass,
-    . ~ . - temperature:photoperiod,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment
-    )
-), type = "II")
-m_metamorphosis_mass <- update(
-    m_metamorphosis_mass,
-    . ~ . - temperature:photoperiod,
-    REML = TRUE,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment
-    )
-)
-# effect size for wet mass on second row
-exp(Confint(m_metamorphosis_mass))
-
-# test model for ratio of SVL to mass
-m_metamorphosis_svl_to_mass <- glmer(
-    svl_to_mass ~ temperature*photoperiod + (1 | tank_id),
-    data = metamorphosis_mass_morpho,
-    family = Gamma(link = "identity"),
-    control = glmerControl(optimizer = "bobyqa"),
-    contrasts = list(temperature = contr.sum, photoperiod = contr.sum)
-)
-Anova(m_metamorphosis_svl_to_mass, type = "III")
-m_metamorphosis_svl_to_mass <- update(
-    m_metamorphosis_svl_to_mass,
-    . ~ . - temperature:photoperiod,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment
-    ),
-    control = glmerControl()
-)
-Anova(m_metamorphosis_svl_to_mass, type = "II")
-
-# test model for gape width
-m_metamorphosis_gape_width <- lmer(
-    log(gape_width_mm) ~ temperature*photoperiod + (1 | tank_id),
-    data = metamorphosis_mass_morpho,
-    REML = FALSE,
-    contrasts = list(temperature = contr.sum, photoperiod = contr.sum)
-)
-Anova(m_metamorphosis_gape_width, type = "III")
+    m_base_growth$metamorphosis_mass,
+    . ~ . - temperature:photoperiod
+), type = "III")
+# exploratory models with clutch random intercept
 Anova(update(
-    m_metamorphosis_gape_width,
-    . ~ . - temperature:photoperiod,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment
-    )
-), type = "II")
-m_metamorphosis_gape_width <- update(
-    m_metamorphosis_gape_width,
-    . ~ . - temperature:photoperiod,
-    REML = TRUE,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment
-    )
-)
-
-# test model for ratio of gape width to mass
-m_metamorphosis_gape_to_mass <- glmer(
-    gape_width_mm / wet_mass_g ~ temperature*photoperiod + (1 | tank_id),
-    data = metamorphosis_mass_morpho,
-    family = Gamma(link = "identity"),
-    contrasts = list(temperature = contr.sum, photoperiod = contr.sum)
-)
-Anova(m_metamorphosis_gape_to_mass, type = "III")
+    m_base_growth$metamorphosis_mass,
+    . ~ . + (1 | fclutch)
+), type = "III")
 Anova(update(
-    m_metamorphosis_gape_to_mass,
+    m_base_growth$metamorphosis_mass,
+    . ~ . + (1 | fclutch) - temperature:photoperiod
+), type = "III")
+icc(update(
+    m_base_growth$metamorphosis_mass,
+    . ~ . + (1 | fclutch) - temperature:photoperiod,
+    REML = TRUE
+), by_group = TRUE)
+m_growth$metamorphosis_mass <- update(
+    m_base_growth$metamorphosis_mass,
+    . ~ . + (1 | fclutch) - temperature:photoperiod,
+    REML = TRUE
+)
+# effect size of temperatures on second row in terms of late-breeding
+exp(Confint(m_growth$metamorphosis_mass) * (-2))
+
+# relative SVL
+Anova(m_base_growth$metamorphosis_svl_relative, type = "III")
+Anova(update(
+    m_base_growth$metamorphosis_svl_relative,
+    . ~ . - temperature:photoperiod
+), type = "III")
+m_growth$metamorphosis_svl_relative <- update(
+    m_base_growth$metamorphosis_svl_relative,
     . ~ . - temperature:photoperiod,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment
-    ),
-    control = glmerControl(optimizer = "bobyqa")
-), type = "II")
-m_metamorphosis_gape_to_mass <- update(
-    m_metamorphosis_gape_to_mass,
-    . ~ . - temperature:photoperiod,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment
-    ),
-    control = glmerControl(optimizer = "bobyqa")
+    REML = TRUE
+)
+# effect size of temperatures on second row in terms of late-breeding
+exp(Confint(m_growth$metamorphosis_svl_relative) * (-2))
+# effect size of mass covariate on third row
+exp(Confint(m_growth$metamorphosis_svl_relative))
+
+# gape width
+Anova(m_base_growth$gape, type = "III")
+Anova(update(m_base_growth$gape, . ~ . - temperature:photoperiod), type = "III")
+# exploratory models with clutch random intercept
+Anova(update(m_base_growth$gape, . ~ . + (1 | fclutch)), type = "III")
+Anova(update(
+    m_base_growth$gape,
+    . ~ . + (1 | fclutch) - temperature:photoperiod
+), type = "III")
+m_growth$gape <- update(
+    m_base_growth$gape,
+    . ~ . + (1 | fclutch) - temperature:photoperiod,
+    REML = TRUE
 )
 
-# Pearson correlation between larval wet mass and tail length
+# Table S3
+iwalk(m_growth, function(m, name) {
+    print(name)
+    print(Confint(m))
+})
 
-cor.test(
-    larvae_growth$wet_mass_mg,
-    larvae_growth$tail_length_mm,
-    method = "pearson"
-)
+# Table S5
+iwalk(m_growth, function(m, name) {
+    print(name)
+    print(VarCorr(m))
+    print(icc(m, by_group = TRUE))
+})
+
 
 # Figure 3 subplots to assemble on MS PowerPoint
 
@@ -1591,9 +1253,8 @@ ggplot() +
         size = 2.5,
         position = position_jitterdodge(seed = 0)
     ) +
-    scale_size_continuous(range = c(1.25, 3)) +
     geom_pointrange(
-        data = tempphoto_model_meanci(update(m_larvae_mass, . ~ . - 1)),
+        data = tempphoto_model_meanci(m_growth$larvae_mass),
         mapping = aes(
             x = ftreatment,
             y = prediction,
@@ -1607,16 +1268,13 @@ ggplot() +
         linewidth = 1
     ) +
     scale_colour_manual(values = c(
-        "1" = unname(palette.colors())[1],
-        "2" = unname(palette.colors())[2],
-        "3" = unname(palette.colors())[3],
-        "4" = unname(palette.colors())[4]
+        "1" = mycolors[1],
+        "2" = mycolors[2],
+        "3" = mycolors[3],
+        "4" = mycolors[4]
     )) +
-    guides(colour = "none", size = "none") +
-    labs(
-        x = "Temperature x photoperiod sequence",
-        y = "Wet mass (mg)"
-    ) +
+    labs(x = "Temperature x photoperiod sequence", y = "Wet mass (mg)") +
+    guides(colour = "none") +
     mytheme +
     theme(
         plot.background = element_rect(fill = "transparent", color = NA),
@@ -1627,14 +1285,14 @@ ggplot() +
 dev.off()
 
 # Figure 3b
-emmeansci <- as.data.frame(emmeans(
-    update(m_larvae_tail_to_mass, . ~ . - 1),
-    specs = c("temperature", "photoperiod")
-))
+emmeansci <- as.data.frame(emmeans(m_growth$tail_relative, specs = c(
+    "temperature",
+    "photoperiod"
+)))
 emmeansci$ftreatment <- as.factor(c(1, 3, 2, 4))
 png(
     filename = file.path(DATA_OUT, "figure_3b.png"),
-    width = 1450,
+    width = 1325,
     height = 1000,
     res = 300,
     bg = "transparent"
@@ -1644,7 +1302,7 @@ ggplot() +
         data = larvae_morpho_by_tank,
         mapping = aes(
             x = ftreatment,
-            y = tail_to_mass_mean,
+            y = tail_length_mean,
             colour = ftreatment
         ),
         shape = 16,
@@ -1652,14 +1310,13 @@ ggplot() +
         alpha = 0.5,
         position = position_jitterdodge(seed = 0)
     ) +
-    scale_size_continuous(range = c(1.25, 3)) +
     geom_pointrange(
         data = emmeansci,
         mapping = aes(
             x = ftreatment,
-            y = exp(emmean),
-            ymin = exp(lower.CL),
-            ymax = exp(upper.CL),
+            y = emmean,
+            ymin = lower.CL,
+            ymax = upper.CL,
             colour = ftreatment
         ),
         shape = 16,
@@ -1667,19 +1324,19 @@ ggplot() +
         size = 1,
         linewidth = 1
     ) +
-    scale_y_continuous(breaks = seq(0.1, 0.2, by = 0.025)) +
     scale_colour_manual(values = c(
-        "1" = unname(palette.colors())[1],
-        "2" = unname(palette.colors())[2],
-        "3" = unname(palette.colors())[3],
-        "4" = unname(palette.colors())[4]
+        "1" = mycolors[1],
+        "2" = mycolors[2],
+        "3" = mycolors[3],
+        "4" = mycolors[4]
     )) +
-    guides(colour = "none", size = "none") +
-    coord_cartesian(ylim = c(0.1, 0.2)) +
     labs(
         x = "Temperature x photoperiod sequence",
-        y = "Ratio of tail length to mass\n(mm:mg)"
+        y = "Relative tail length (mm)"
     ) +
+    scale_y_continuous(breaks = seq(15, 23, by = 2)) +
+    coord_cartesian(ylim = c(15, 23)) +
+    guides(colour = "none") +
     mytheme +
     theme(
         plot.background = element_rect(fill = "transparent", color = NA),
@@ -1692,61 +1349,6 @@ dev.off()
 # Figure 3c
 png(
     filename = file.path(DATA_OUT, "figure_3c.png"),
-    width = 1300,
-    height = 1000,
-    res = 300,
-    bg = "transparent"
-)
-ggplot() +
-    geom_point(
-        data = larvae_morpho_by_tank,
-        mapping = aes(
-            x = ftreatment,
-            y = tail_length_mean_mm,
-            colour = ftreatment
-        ),
-        shape = 16,
-        size = 2.5,
-        alpha = 0.5,
-        position = position_jitterdodge(seed = 0)
-    ) +
-    scale_size_continuous(range = c(1.25, 3)) +
-    geom_pointrange(
-        data = tempphoto_model_meanci(update(m_larvae_tail, . ~ . - 1)),
-        mapping = aes(
-            x = ftreatment,
-            y = prediction,
-            ymin = lower.CL,
-            ymax = upper.CL,
-            colour = ftreatment
-        ),
-        shape = 16,
-        alpha = 0.5,
-        size = 1,
-        linewidth = 1
-    ) +
-    scale_y_continuous(breaks = seq(15, 23, by = 2)) +
-    scale_colour_manual(values = c(
-        "1" = unname(palette.colors())[1],
-        "2" = unname(palette.colors())[2],
-        "3" = unname(palette.colors())[3],
-        "4" = unname(palette.colors())[4]
-    )) +
-    guides(colour = "none", size = "none") +
-    coord_cartesian(ylim = c(15, 23)) +
-    labs(x = "Temperature x photoperiod sequence", y = "Tail length (mm)") +
-    mytheme +
-    theme(
-        plot.background = element_rect(fill = "transparent", color = NA),
-        legend.background = element_rect(fill = "transparent", color = NA),
-        axis.text = element_text(size = rel(1.4)),
-        axis.title = element_text(size = rel(1.4))
-    )
-dev.off()
-
-# Figure 3d
-png(
-    filename = file.path(DATA_OUT, "figure_3d.png"),
     width = 1475,
     height = 1100,
     res = 300,
@@ -1765,9 +1367,8 @@ ggplot() +
         size = 2.5,
         position = position_jitterdodge(seed = 0)
     ) +
-    scale_size_continuous(range = c(1.25, 3)) +
     geom_pointrange(
-        data = tempphoto_model_meanci(update(m_metamorphosis_mass, . ~ . - 1)),
+        data = tempphoto_model_meanci(m_growth$metamorphosis_mass),
         mapping = aes(
             x = ftreatment,
             y = exp(prediction),
@@ -1780,19 +1381,75 @@ ggplot() +
         size = 1,
         linewidth = 1
     ) +
-    labs(
-        x = "Temperature x photoperiod sequence",
-        y = "Wet mass (mg)"
-    ) +
     scale_colour_manual(values = c(
-        "1" = unname(palette.colors())[1],
-        "2" = unname(palette.colors())[2],
-        "3" = unname(palette.colors())[3],
-        "4" = unname(palette.colors())[4]
+        "1" = mycolors[1],
+        "2" = mycolors[2],
+        "3" = mycolors[3],
+        "4" = mycolors[4]
     )) +
+    labs(x = "Temperature x photoperiod sequence", y = "Wet mass (mg)") +
     scale_y_continuous(breaks = seq(500, 1100, by = 100)) +
     coord_cartesian(ylim = c(500, 1100)) +
-    guides(colour = "none", size = "none") +
+    guides(colour = "none") +
+    mytheme +
+    theme(
+        plot.background = element_rect(fill = "transparent", color = NA),
+        legend.background = element_rect(fill = "transparent", color = NA),
+        axis.text = element_text(size = rel(1.6)),
+        axis.title = element_text(size = rel(1.6))
+    )
+dev.off()
+
+# Figure 3d
+emmeansci <- as.data.frame(emmeans(
+    m_growth$metamorphosis_svl_relative),
+    specs = c("temperature", "photoperiod")
+)
+emmeansci$ftreatment <- as.factor(c(1, 3, 2, 4))
+png(
+    filename = file.path(DATA_OUT, "figure_3d.png"),
+    width = 1475,
+    height = 1100,
+    res = 300,
+    bg = "transparent"
+)
+ggplot() +
+    geom_point(
+        data = metamorphosis_mass_morpho_by_tank,
+        mapping = aes(
+            x = ftreatment,
+            y = svl_mean,
+            colour = ftreatment
+        ),
+        shape = 17,
+        size = 2.5,
+        alpha = 0.5,
+        position = position_jitterdodge(seed = 0)
+    ) +
+    geom_pointrange(
+        data = emmeansci,
+        mapping = aes(
+            x = ftreatment,
+            y = exp(emmean),
+            ymin = exp(lower.CL),
+            ymax = exp(upper.CL),
+            colour = ftreatment
+        ),
+        shape = 17,
+        alpha = 0.5,
+        size = 1,
+        linewidth = 1
+    ) +
+    scale_colour_manual(values = c(
+        "1" = mycolors[1],
+        "2" = mycolors[2],
+        "3" = mycolors[3],
+        "4" = mycolors[4]
+    )) +
+    labs(x = "Temperature x photoperiod sequence", y = "Relative SVL (mm)") +
+    scale_y_continuous(breaks = seq(16.5, 22.5, by = 1.5)) +
+    coord_cartesian(ylim = c(16.5, 22.5)) +
+    guides(colour = "none") +
     mytheme +
     theme(
         plot.background = element_rect(fill = "transparent", color = NA),
@@ -1805,67 +1462,6 @@ dev.off()
 # Figure 3e
 png(
     filename = file.path(DATA_OUT, "figure_3e.png"),
-    width = 1575,
-    height = 1100,
-    res = 300,
-    bg = "transparent"
-)
-ggplot() +
-    geom_point(
-        data = metamorphosis_mass_morpho_by_tank,
-        mapping = aes(
-            x = ftreatment,
-            y = svl_to_mass_mean / 1000,
-            colour = ftreatment
-        ),
-        shape = 17,
-        size = 2.5,
-        alpha = 0.5,
-        position = position_jitterdodge(seed = 0)
-    ) +
-    scale_size_continuous(range = c(1.25, 3)) +
-    geom_pointrange(
-        data = tempphoto_model_meanci(update(
-            m_metamorphosis_svl_to_mass,
-            . ~ . - 1
-        )),
-        mapping = aes(
-            x = ftreatment,
-            y = prediction / 1000,
-            ymin = asymp.LCL / 1000,
-            ymax = asymp.UCL / 1000,
-            colour = ftreatment
-        ),
-        shape = 17,
-        alpha = 0.5,
-        size = 1,
-        linewidth = 1
-    ) +
-    labs(
-        x = "Temperature x photoperiod sequence",
-        y = "Ratio of SVL to mass\n(mm:mg)"
-    ) +
-    scale_colour_manual(values = c(
-        "1" = unname(palette.colors())[1],
-        "2" = unname(palette.colors())[2],
-        "3" = unname(palette.colors())[3],
-        "4" = unname(palette.colors())[4]
-    )) +
-    scale_y_continuous(breaks = seq(18, 34, by = 4) / 1000) +
-    guides(colour = "none", size = "none") +
-    coord_cartesian(ylim = c(18, 34) / 1000) +
-    mytheme +
-    theme(
-        plot.background = element_rect(fill = "transparent", color = NA),
-        legend.background = element_rect(fill = "transparent", color = NA),
-        axis.text = element_text(size = rel(1.6)),
-        axis.title = element_text(size = rel(1.6))
-    )
-dev.off()
-
-# Figure 3f
-png(
-    filename = file.path(DATA_OUT, "figure_3f.png"),
     width = 1275,
     height = 1000,
     res = 300,
@@ -1884,12 +1480,8 @@ ggplot() +
         alpha = 0.5,
         position = position_jitterdodge(seed = 0)
     ) +
-    scale_size_continuous(range = c(1.25, 3)) +
     geom_pointrange(
-        data = tempphoto_model_meanci(update(
-            m_metamorphosis_gape_width,
-            . ~ . - 1
-        )),
+        data = tempphoto_model_meanci(m_growth$gape),
         mapping = aes(
             x = ftreatment,
             y = exp(prediction),
@@ -1902,19 +1494,16 @@ ggplot() +
         size = 1,
         linewidth = 1
     ) +
-    labs(
-        x = "Temperature x photoperiod sequence",
-        y = "Gape width (mm)"
-    ) +
-    guides(colour = "none", size = "none") +
     scale_colour_manual(values = c(
-        "1" = unname(palette.colors())[1],
-        "2" = unname(palette.colors())[2],
-        "3" = unname(palette.colors())[3],
-        "4" = unname(palette.colors())[4]
+        "1" = mycolors[1],
+        "2" = mycolors[2],
+        "3" = mycolors[3],
+        "4" = mycolors[4]
     )) +
+    labs(x = "Temperature x photoperiod sequence", y = "Gape width (mm)") +
     scale_y_continuous(breaks = seq(6.5, 8.5, by = 0.5)) +
     coord_cartesian(ylim = c(6.5, 8.5)) +
+    guides(colour = "none") +
     mytheme +
     theme(
         plot.background = element_rect(fill = "transparent", color = NA),
@@ -1924,61 +1513,69 @@ ggplot() +
     )
 dev.off()
 
-# Figure S8
-png(
-    filename = file.path(DATA_OUT, "figure_s8a.png"),
-    width = 2000,
-    height = 2000,
-    res = 300,
-    bg = "transparent"
-)
-corrplot(
-    cor(larvae_growth[, c(
-        "wet_mass_mg",
-        "whole_body_length_mm",
-        "tail_length_mm"
-    )]),
-    method = "number",
-    bg = "transparent",
-    number.cex = 1.5
-)
-dev.off()
-# rename for visual
-metamorphosis_mass_morpho <- rename(
-    metamorphosis_mass_morpho,
-    days_development = "days_since_start"
-)
-png(
-    filename = file.path(DATA_OUT, "figure_s8b.png"),
-    width = 2000,
-    height = 2000,
-    res = 300,
-    bg = "transparent"
-)
-corrplot(
-    cor(metamorphosis_mass_morpho[, c(
-        "wet_mass_mg",
-        "days_development",
-        "svl_mm",
-        "gape_width_mm",
-        "tibiofibular_length_mm"
-    )]),
-    method = "number",
-    bg = "transparent"
-)
-dev.off()
-metamorphosis_mass_morpho <- rename(
-    metamorphosis_mass_morpho,
-    days_since_start = "days_development"
-)
-
-# Larval behavioral trials (Table 2, Fig. 4, Table S1, Fig. S6 & stats) --------
+# Larval behavioral trials (Table 2, Fig. 4, Table S2, Table S4, Table S6, Fig. S6 & stats) --------
 # summary statistics on skewed distribution
 max(larvae_behavior$summed_minutes_under_lettuce_per_trial)
 Fn <- ecdf(larvae_behavior$summed_minutes_under_lettuce_per_trial)
 Fn(1)
 
-# analyses for Table 2
+# models
+
+m_base_time_under_lettuce <- list(
+    inside = glmmTMB(
+        summed_minutes_under_lettuce_per_trial ~ temperature*photoperiod*antipredator_cue + (1 | tank_id),
+        data = larvae_behavior[larvae_behavior$location_type == "in_rearing", ],
+        family = tweedie(),
+        REML = FALSE,
+        contrasts = list(
+            temperature = contr.sum,
+            photoperiod = contr.sum,
+            antipredator_cue = contr.sum
+        )
+    ),
+    novel = glmmTMB(
+        summed_minutes_under_lettuce_per_trial ~ temperature*photoperiod*antipredator_cue + (1 | tank_id),
+        data = larvae_behavior[larvae_behavior$location_type == "out_novel", ],
+        family = tweedie(),
+        REML = FALSE,
+        contrasts = list(
+            temperature = contr.sum,
+            photoperiod = contr.sum,
+            antipredator_cue = contr.sum
+        )
+    )
+)
+m_time_under_lettuce <- list()
+
+# expected that full model can have singular issues due to complete lack of
+#  feeding activity in some treatments
+m_base_feed <- list(
+    inside = glmer(
+        ffeed ~ temperature*photoperiod*antipredator_cue + (1 | tank_id),
+        family = binomial,
+        data = larvae_behavior[larvae_behavior$location_type == "in_rearing", ],
+        contrasts = list(
+            temperature = contr.sum,
+            photoperiod = contr.sum,
+            antipredator_cue = contr.sum
+        )
+    ),
+    novel = glmer(
+        ffeed ~ temperature*photoperiod*antipredator_cue + (1 | tank_id),
+        family = binomial,
+        data = larvae_behavior[larvae_behavior$location_type == "out_novel", ],
+        contrasts = list(
+            temperature = contr.sum,
+            photoperiod = contr.sum,
+            antipredator_cue = contr.sum
+        )
+    )
+)
+m_feed <- list()
+
+# analyses for Table 2, Table S2,
+#  and effect sizes of significant terms
+
 # car::Anova cannot do LRT or F-tests for glmmTMB models,
 #  Wald Chi-square tests only
 contr.treatment(levels(larvae_behavior$temperature))
@@ -1990,210 +1587,146 @@ contr.sum(levels(larvae_behavior$antipredator_cue))
 
 # duration under lettuce
 # inside chamber
-m_larvae_time_under_lettuce_inside <- glmmTMB(
-    summed_minutes_under_lettuce_per_trial ~ temperature*photoperiod*antipredator_cue + (1 | tank_id),
-    data = larvae_behavior[larvae_behavior$location_type == "in_rearing", ],
-    family = tweedie(),
-    REML = FALSE,
-    contrasts = list(
-        temperature = contr.sum,
-        photoperiod = contr.sum,
-        antipredator_cue = contr.sum
-    )
-)
-Anova(m_larvae_time_under_lettuce_inside, type = "III")
+# Table S2
+Anova(m_base_time_under_lettuce$inside, type = "III")
+# Table 2
 Anova(update(
-    m_larvae_time_under_lettuce_inside,
+    m_base_time_under_lettuce$inside,
     . ~ . - temperature:photoperiod:antipredator_cue
 ), type = "III")
 Anova(update(
-    m_larvae_time_under_lettuce_inside,
+    m_base_time_under_lettuce$inside,
     . ~ . - temperature:photoperiod:antipredator_cue - temperature:photoperiod
 ), type = "III")
 Anova(update(
-    m_larvae_time_under_lettuce_inside,
+    m_base_time_under_lettuce$inside,
     . ~ . - temperature:photoperiod:antipredator_cue - temperature:photoperiod - photoperiod:antipredator_cue
 ), type = "III")
 Anova(update(
-    m_larvae_time_under_lettuce_inside,
+    m_base_time_under_lettuce$inside,
+    . ~ . - temperature:photoperiod:antipredator_cue - temperature:photoperiod - photoperiod:antipredator_cue - temperature:antipredator_cue
+), type = "III")
+m_time_under_lettuce$inside <- update(
+    m_base_time_under_lettuce$inside,
     . ~ . - temperature:photoperiod:antipredator_cue - temperature:photoperiod - photoperiod:antipredator_cue - temperature:antipredator_cue,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment,
-        antipredator_cue = contr.treatment
-    )
-), type = "II")
-m_larvae_time_under_lettuce_inside <- update(
-    m_larvae_time_under_lettuce_inside,
-    . ~ . - temperature:photoperiod:antipredator_cue - temperature:photoperiod - photoperiod:antipredator_cue - temperature:antipredator_cue,
-    REML = TRUE,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment,
-        antipredator_cue = contr.treatment
-    )
+    REML = TRUE
 )
+diagnose(m_time_under_lettuce$inside)
+VarCorr(m_time_under_lettuce$inside)
 # common room outside chamber
-m_larvae_time_under_lettuce_novel <- glmmTMB(
-    summed_minutes_under_lettuce_per_trial ~ temperature*photoperiod*antipredator_cue + (1 | tank_id),
-    data = larvae_behavior[larvae_behavior$location_type == "out_novel", ],
-    family = tweedie(),
-    REML = FALSE,
-    contrasts = list(
-        temperature = contr.sum,
-        photoperiod = contr.sum,
-        antipredator_cue = contr.sum
-    )
-)
-Anova(m_larvae_time_under_lettuce_novel, type = "III")
+# Table S2
+Anova(m_base_time_under_lettuce$novel, type = "III")
+# Table 2
 Anova(update(
-    m_larvae_time_under_lettuce_novel,
+    m_base_time_under_lettuce$novel,
     . ~ . - temperature:photoperiod:antipredator_cue
 ), type = "III")
 Anova(update(
-    m_larvae_time_under_lettuce_novel,
+    m_base_time_under_lettuce$novel,
     . ~ . - temperature:photoperiod:antipredator_cue - temperature:photoperiod
 ), type = "III")
 Anova(update(
-    m_larvae_time_under_lettuce_novel,
-    . ~ . - temperature:photoperiod:antipredator_cue - temperature:photoperiod - temperature:antipredator_cue
+    m_base_time_under_lettuce$novel,
+    . ~ . - temperature:photoperiod:antipredator_cue - temperature:photoperiod - photoperiod:antipredator_cue
 ), type = "III")
 Anova(update(
-    m_larvae_time_under_lettuce_novel,
+    m_base_time_under_lettuce$novel,
+    . ~ . - temperature:photoperiod:antipredator_cue - temperature:photoperiod - photoperiod:antipredator_cue - temperature:antipredator_cue
+), type = "III")
+m_time_under_lettuce$novel <- update(
+    m_base_time_under_lettuce$novel,
     . ~ . - temperature:photoperiod:antipredator_cue - temperature:photoperiod - temperature:antipredator_cue - photoperiod:antipredator_cue,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment,
-        antipredator_cue = contr.treatment
-    )
-), type = "II")
-m_larvae_time_under_lettuce_novel <- update(
-    m_larvae_time_under_lettuce_novel,
-    . ~ . - temperature:photoperiod:antipredator_cue - temperature:photoperiod - temperature:antipredator_cue - photoperiod:antipredator_cue,
-    REML = TRUE,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment,
-        antipredator_cue = contr.treatment
-    )
+    REML = TRUE
 )
-
-# analyses for Table S1
-# behavioral trials as larvae: duration under lettuce
-#  (check if needed or change)
-# inside
-ICtab(
-    update(m_larvae_time_under_lettuce_inside, . ~ . + fclutch, REML = FALSE),
-    update(m_larvae_time_under_lettuce_inside, . ~ . + fpond, REML = FALSE),
-    update(m_larvae_time_under_lettuce_inside, REML = FALSE),
-    type = "AICc",
-    base = TRUE,
-    weights = TRUE,
-    logLik = TRUE,
-    nobs = nrow(larvae_behavior)
-)
-diagnose(m_larvae_time_under_lettuce_inside)
-# outside
-ICtab(
-    update(m_larvae_time_under_lettuce_novel, . ~ . + fclutch, REML = FALSE),
-    update(m_larvae_time_under_lettuce_novel, . ~ . + fpond, REML = FALSE),
-    update(m_larvae_time_under_lettuce_novel, REML = FALSE),
-    type = "AICc",
-    base = TRUE,
-    weights = TRUE,
-    logLik = TRUE,
-    nobs = nrow(larvae_behavior)
-)
-diagnose(m_larvae_time_under_lettuce_novel)
+diagnose(m_time_under_lettuce$novel)
 
 # probability of feeding
 # inside chamber
-# expected that full model can have singular issues due to complete lack of
-#  feeding activity in some treatments
-m_larvae_feed_inside <- glmer(
-    ffeed ~ temperature*photoperiod*antipredator_cue + (1 | tank_id),
-    family = binomial,
-    data = larvae_behavior[larvae_behavior$location_type == "in_rearing", ],
-    contrasts = list(
-        temperature = contr.sum,
-        photoperiod = contr.sum,
-        antipredator_cue = contr.sum
-    )
-)
 # summary shows "Model is nearly unidentifiable: large eigenvalue ratio
 # - Rescale variables?"
-summary(m_larvae_feed_inside)
-m_larvae_feed_inside <- update(
-    m_larvae_feed_inside,
+summary(m_base_feed$inside)
+m_base_feed$inside <- update(
+    m_base_feed$inside,
     . ~ . - temperature:photoperiod:antipredator_cue
 )
 # all clear
-summary(m_larvae_feed_inside)
-Anova(m_larvae_feed_inside, type = "III")
+summary(m_base_feed$inside)
+# Table S2
+Anova(m_base_feed$inside, type = "III")
+# Table 2
 Anova(update(
-    m_larvae_feed_inside,
+    m_base_feed$inside,
     . ~ . - temperature:antipredator_cue
 ), type = "III")
 Anova(update(
-    m_larvae_feed_inside,
+    m_base_feed$inside,
     . ~ . - temperature:antipredator_cue - photoperiod:antipredator_cue
 ), type = "III")
-m_larvae_feed_inside <- update(
-    m_larvae_feed_inside,
-    . ~ . - temperature:antipredator_cue - photoperiod:antipredator_cue - temperature:photoperiod,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment,
-        antipredator_cue = contr.treatment
-    )
+m_feed$inside <- update(
+    m_base_feed$inside,
+    . ~ . - temperature:antipredator_cue - photoperiod:antipredator_cue - temperature:photoperiod
 )
-Anova(m_larvae_feed_inside, type = "II")
-
+Anova(m_feed$inside, type = "III")
 # common room outside chamber
-# expected that full model can have singular issues due to complete lack of
-#  feeding activity in some treatments
-m_larvae_feed_novel <- glmer(
-    ffeed ~ temperature*photoperiod*antipredator_cue + (1 | tank_id),
-    family = binomial,
-    data = larvae_behavior[larvae_behavior$location_type == "out_novel", ],
-    contrasts = list(
-        temperature = contr.sum,
-        photoperiod = contr.sum,
-        antipredator_cue = contr.sum
-    )
-)
 # summary shows "Model is nearly unidentifiable: large eigenvalue ratio
 # - Rescale variables?"
-summary(m_larvae_feed_novel)
-m_larvae_feed_novel <- update(
-    m_larvae_feed_novel,
+summary(m_base_feed$novel)
+m_base_feed$novel <- update(
+    m_base_feed$novel,
     . ~ . - temperature:photoperiod:antipredator_cue
 )
 # summary shows "Model is nearly unidentifiable: large eigenvalue ratio
 # - Rescale variables?"
-summary(m_larvae_feed_novel)
-Anova(m_larvae_feed_novel, type = "III")
-m_larvae_feed_novel <- update(
-    m_larvae_feed_novel,
+summary(m_base_feed$novel)
+Anova(m_base_feed$novel, type = "III")
+m_base_feed$novel <- update(
+    m_base_feed$novel,
     . ~ . - temperature:antipredator_cue
 )
 # all clear
-summary(m_larvae_feed_novel)
-Anova(m_larvae_feed_novel, type = "III")
+summary(m_base_feed$novel)
+# Table S2
+Anova(m_base_feed$novel, type = "III")
+# Table 2
 Anova(update(
-    m_larvae_feed_novel,
+    m_base_feed$novel,
     . ~ . - temperature:photoperiod
 ), type = "III")
-m_larvae_feed_novel <- update(
-    m_larvae_feed_novel,
-    . ~ . - temperature:photoperiod - photoperiod:antipredator_cue,
-    contrasts = list(
-        temperature = contr.treatment,
-        photoperiod = contr.treatment,
-        antipredator_cue = contr.treatment
-    )
+m_feed$novel <- update(
+    m_base_feed$novel,
+    . ~ . - temperature:photoperiod - photoperiod:antipredator_cue
 )
-Anova(m_larvae_feed_novel, type = "II")
+Anova(m_feed$novel, type = "III")
+# effect size of temperatures in terms of late-breeding
+# note: plogis(a) - plogis(b) != plogis(a - b)
+emmeans(
+    m_feed$novel,
+    revpairwise ~ temperature,
+    regrid = "response",
+    ratios = FALSE, infer = c(TRUE, FALSE)
+)
+
+# Table S4
+iwalk(m_time_under_lettuce, function(m, name) {
+    print(name)
+    print(confint(m, parm = "beta_", method = "wald"))
+})
+iwalk(m_feed, function(m, name) {
+    print(name)
+    print(Confint(m))
+})
+
+# Table S6
+iwalk(m_time_under_lettuce, function(m, name) {
+    print(name)
+    print(VarCorr(m))
+    print(icc(m, by_group = TRUE))
+})
+iwalk(m_feed, function(m, name) {
+    print(name)
+    print(VarCorr(m))
+    print(icc(m, by_group = TRUE))
+})
 
 # Figure 4
 shapes <- c("mean" = 18, "median" = 16)
@@ -2301,7 +1834,7 @@ ggplot(
         position = position_jitterdodge(seed = 0)
     ) +
     scale_colour_manual(
-        values = unname(palette.colors(n = 4)),
+        values = mycolors,
         labels = c(
             "early x early",
             "early x late",
@@ -2346,27 +1879,18 @@ ggplot(
     )
 dev.off()
 
-# non-parametric correlation test without making assumptions on variance
+# nonparametric correlation test without making assumptions on variance
 #  in Supplementary Information
 brunnermunzel.test(
     summed_minutes_under_lettuce_per_trial ~ ffeed,
     data = larvae_behavior
 )
 
-# Model evaluation of stats in Tables 1-2 --------------------------------------
+# Disclosure: model evaluation of stats in Tables 1-2 --------------------------
 # visualize error in models used for Table 1
 
 # residuals
-iwalk(list(
-    larvae_mass = m_larvae_mass,
-    larvae_mass_cv = m_larvae_mass_cv,
-    larvae_tail = m_larvae_tail,
-    larvae_tail_to_mass = m_larvae_tail_to_mass,
-    metamorphosis_mass = m_metamorphosis_mass,
-    metamorphosis_svl_to_mass = m_metamorphosis_svl_to_mass,
-    metamorphosis_gape = m_metamorphosis_gape_width,
-    metamorphosis_gape_to_mass = m_metamorphosis_gape_to_mass
-), function(m, name) {
+iwalk(m_growth, function(m, name) {
     formula_name <- paste(
         trimws(deparse(formula(m))),
         collapse = "\n"
@@ -2382,23 +1906,18 @@ iwalk(list(
 })
 # observed and predicted means and bootstrapped 95% CI
 iwalk(list(
-    larvae_mass = list(m_larvae_mass, larvae_growth_no_outlier),
+    larvae_mass = list(m_growth$larvae_mass, larvae_growth_no_outlier),
     larvae_mass_cv = list(m_larvae_mass_cv, larvae_mass_by_tank),
-    larvae_tail = list(m_larvae_tail, larvae_growth),
-    larvae_tail_to_mass = list(m_larvae_tail_to_mass, larvae_growth),
-    metamorphosis_mass = list(m_metamorphosis_mass, metamorphosis_mass_morpho),
-    metamorphosis_svl_to_mass = list(
-        m_metamorphosis_svl_to_mass,
+    tail_relative = list(m_growth$tail_relative, larvae_growth),
+    metamorphosis_mass = list(
+        m_growth$metamorphosis_mass,
         metamorphosis_mass_morpho
     ),
-    metamorphosis_gape = list(
-        m_metamorphosis_gape_width,
+    metamorphosis_svl_relative = list(
+        m_growth$metamorphosis_svl_relative,
         metamorphosis_mass_morpho
     ),
-    metamorphosis_gape_to_mass = list(
-        m_metamorphosis_gape_to_mass,
-        metamorphosis_mass_morpho
-    )
+    gape = list(m_growth$gape, metamorphosis_mass_morpho)
 ), function(m, name) {
     formula_name <- paste(
         trimws(deparse(formula(m[[1]]))),
@@ -2449,10 +1968,7 @@ iwalk(list(
 # visualize error in models used for Table 2
 
 # residuals
-iwalk(list(
-    inside = m_larvae_time_under_lettuce_inside,
-    novel = m_larvae_time_under_lettuce_novel
-), function(m, name) {
+iwalk(m_time_under_lettuce, function(m, name) {
     formula_name <- paste(
         trimws(deparse(formula(m))),
         collapse = "\n"
@@ -2468,16 +1984,18 @@ iwalk(list(
 })
 # observed and predicted means and bootstrapped 95% CI
 iwalk(list(
-    inside = list(m_larvae_time_under_lettuce_inside, larvae_behavior[
+    time_under_lettuce_inside = list(
+        m_time_under_lettuce$inside,
+        larvae_behavior[larvae_behavior$location_type == "in_rearing", ]
+    ),
+    time_under_lettuce_novel = list(
+        m_time_under_lettuce$novel,
+        larvae_behavior[larvae_behavior$location_type == "out_novel", ]
+    ),
+    feed_inside = list(m_feed$inside, larvae_behavior[
         larvae_behavior$location_type == "in_rearing",
     ]),
-    novel = list(m_larvae_time_under_lettuce_novel, larvae_behavior[
-        larvae_behavior$location_type == "out_novel",
-    ]),
-    inside = list(m_larvae_feed_inside, larvae_behavior[
-        larvae_behavior$location_type == "in_rearing",
-    ]),
-    novel = list(m_larvae_feed_novel, larvae_behavior[
+    feed_novel = list(m_feed$novel, larvae_behavior[
         larvae_behavior$location_type == "out_novel",
     ])
 ), function(m, name) {
@@ -2536,7 +2054,7 @@ iwalk(list(
     print(g)
 })
 
-# Timing of metamorphosis (Fig. 5, Table 3, Table S2, Fig. S7) -----------------
+# Timing of metamorphosis (Fig. 5, Table S7, Table S8, Fig. S7) ----------------
 # Find seasons when metamorphosis completed
 
 s1_summer_temperature_cutoff <- subset(
@@ -2666,12 +2184,12 @@ max(metamorphosis_complete_timings_summary$duration_total) - min(
 
 # Find bootstrapped difference between early vs late temperature sequences
 days_to_metamorphosis_temperature_combs <- expand.grid(
-    early = metamorphosis_complete[
-        metamorphosis_complete$temperature == "early",
-    ]$days_since_start,
-    late = metamorphosis_complete[
-        metamorphosis_complete$temperature == "late",
-    ]$days_since_start
+    early = days_since_start_by_tank[
+        days_since_start_by_tank$temperature == "early",
+    ]$days_since_start_mean,
+    late = days_since_start_by_tank[
+        days_since_start_by_tank$temperature == "late",
+    ]$days_since_start_mean
 )
 days_to_metamorphosis_temperature_combs <- mutate(
     days_to_metamorphosis_temperature_combs,
@@ -2728,7 +2246,7 @@ par(mar = c(5, 5, 4, 2) + 0.1)
 plot(
     m_metamorphosis_rates_visualize,
     mark.time = TRUE,
-    col = palette.colors()[1:4],
+    col = mycolors,
     lwd = 3,
     xlim = c(0, 380),
     fun = "event",
@@ -2746,7 +2264,8 @@ for (i in 1:4) {
         x = c(timex[2:length(timex)], rev(timex[2:length(timex)])),
         y = c(ci_1[1:(length(ci_1) - 1)], rev(ci_2[1:(length(ci_2) - 1)])),
         border = NA,
-        col = palette.colors(alpha = 0.2)[i]
+        lty = c(1, 2, 2, 1)[i],
+        col = adjustcolor(mycolors[i], alpha.f = 0.25)
     )
 }
 legend(
@@ -2755,8 +2274,8 @@ legend(
     title = "",
     xjust = 0,
     y.intersp = 2,
-    lwd = 3,
-    col = palette.colors(alpha = 0.66)[1:4],
+    lwd = 2.5,
+    col = adjustcolor(mycolors, alpha.f = 0.66),
     cex = 0.75,
     bty = "n"
 )
@@ -2803,7 +2322,7 @@ m_metamorphosis_rates <- list(
     )
 )
 
-# Table S2
+# Table S7
 ICtab(
     m_metamorphosis_rates$no_strata_x,
     m_metamorphosis_rates$no_strata,
@@ -2993,8 +2512,8 @@ plot(
     single_plot = TRUE,
     lty = 1,
     lwd = 2,
-    col = palette.colors()[c(1, 3)],
-    fill = palette.colors(alpha = 0.25)[c(1, 3)],
+    col = mycolors[c(1, 3)],
+    fill = adjustcolor(mycolors, alpha.f = 0.25)[c(1, 3)],
     xlab = "Days since first metamorphosis\nunder a given temperature sequence (y)",
     ylab = "h(y | temperature     )"
 )
@@ -3007,7 +2526,7 @@ legend(
     y.intersp = 2,
     lty = 1,
     lwd = 2,
-    col = palette.colors()[c(1, 3)],
+    col = mycolors[c(1, 3)],
     bty = "n"
 )
 dev.off()
@@ -3028,8 +2547,8 @@ plot(
     single_plot = TRUE,
     lty = 1,
     lwd = 2,
-    col = palette.colors()[c(4, 2)],
-    fill = palette.colors(alpha = 0.25)[c(4, 2)],
+    col = mycolors[c(1, 2)],
+    fill = adjustcolor(mycolors, alpha.f = 0.25)[c(1, 2)],
     xlab = "Days since first metamorphosis\nunder a given temperature sequence (y)",
     ylab = "h(y | photoperiod     )"
 )
@@ -3042,7 +2561,7 @@ legend(
     y.intersp = 2,
     lty = 1,
     lwd = 2,
-    col = palette.colors()[c(4, 2)],
+    col = mycolors[c(1, 2)],
     bty = "n"
 )
 dev.off()
@@ -3057,7 +2576,7 @@ exp(confint(
     estimate = TRUE
 ))
 
-# Table 3
+# Table S8
 
 # Cumulative averages from start of experiment to median day of completing
 #  metamorphosis
@@ -3320,7 +2839,7 @@ metamorphosis_surv_mass_days_morpho_by_tank_nmds$points[
 ] <- metamorphosis_surv_mass_days_morpho_by_tank_nmds$points[, 1] * (-1)
 
 # Plot it
-palette(palette.colors(alpha = 0.66))
+palette(adjustcolor(mycolors, alpha.f = 0.75))
 png(
     filename = file.path(DATA_OUT, "figure_6.png"),
     width = 2400,
@@ -3336,8 +2855,9 @@ ordihull(
     ord = metamorphosis_surv_mass_days_morpho_by_tank_nmds,
     groups = metamorphosis_surv_mass_days_morpho_by_tank$blinded_sequence_number,
     draw = "polygon",
-    col = unname(palette.colors(alpha = 0.33))[1:4],
-    alpha = 64
+    border = mycolors,
+    col = mycolors,
+    alpha = 128
 )
 points(
     metamorphosis_surv_mass_days_morpho_by_tank_nmds$points,
@@ -3381,7 +2901,7 @@ legend(
     title.adj = 0,
     xjust = 0,
     pch = 16,
-    col = palette.colors(alpha = 0.5)[1:4],
+    col = mycolors,
     y.intersp = 1.2,
     cex = 0.75,
     bty = "n"

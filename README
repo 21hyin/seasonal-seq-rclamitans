@@ -22,12 +22,15 @@ Raw data all located in datasets/raw folder
 4. Field data
 - rana_clamitans_nightlycalls.csv
 - leaves.csv
-- water_temperatures/field/*.csv
-- seasonal_field_photoperiod/*.txt
+- water_temperatures/field/6mo_5min_p1_temperature_HOBO.csv
+- water_temperatures/field/6mo_5min_p4_temperature_HOBO.csv
+- seasonal_field_photoperiod/ponds5-8_darkness_2001.txt
+- seasonal_field_photoperiod/ponds5-8_daylight_2001.txt
 - seasonal_field_air_temperature.csv
 
 5. Chamber water temperatures, including nine .csv files
 - water_temperatures/chamber/*
+in format [three-digit room number and letter] [season] temps [YYYY-MM-DD] through [YYYY-MM-DD].csv
 
 6. Larvae
 - tadpoles_midcensus.csv
@@ -48,9 +51,9 @@ pandas (v2.0.3), numpy (v1.24.3), matplotlib (v3.6.0)
 2. R version 4.2.0
 Published packages: dplyr (v1.1.4), ggplot2 (v3.5.1), Hmisc (v5.1-2), 
 emmeans (v1.10.3), fitdistrplus (v1.1-11), bbmle (v1.0.25), lme4 (v1.1-34), 
-glmmTMB (v1.1.10), survival (v3.6-4), tramME (v1.0.7), multcomp (v1.4-26),  
-see (v0.11.0), car (v3.1-3), purrr (v1.0.2), corrplot (v0.92), vegan (v2.6-4),
-reshape2 (v1.4.4), brunnermunzel (v2.0), cowplot (v1.1.1)
+performance (v0.15.3), glmmTMB (v1.1.10), survival (v3.6-4), tramME (v1.0.7), 
+car (v3.1-3), purrr (v1.0.2), vegan (v2.6-4), reshape2 (v1.4.4), brunnermunzel 
+(v2.0), cowplot (v1.1.1)
 
 
 WORKFLOW WITH CODE

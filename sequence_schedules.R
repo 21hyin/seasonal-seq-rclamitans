@@ -72,6 +72,9 @@ mytheme <- theme(
     axis.line = element_line(colour = "black")
 )
 
+# color palette
+mycolors <- c("#000000", "#F5C710", "#9753F5", "#009E73")
+
 t1 <- ggplot(sequences_all[sequences_all$ftreatment == "1", ], aes(
     x = datetime,
     y = y_condition,
@@ -79,7 +82,7 @@ t1 <- ggplot(sequences_all[sequences_all$ftreatment == "1", ], aes(
     yend = y_condition_next,
     linetype = transition
 )) +
-    geom_segment(colour = palette.colors()[1]) +
+    geom_segment(colour = mycolors[1]) +
     # dummy segment to get y-axis limits correct
     geom_segment(data = data.frame(
         datetime = rep(as.POSIXct(strptime("2023-05-08", "%Y-%m-%d")), 2),
@@ -140,7 +143,7 @@ plots <- sapply(2:3, function(i) {
             linetype = transition
         )
     ) +
-        geom_segment(colour = palette.colors()[i]) +
+        geom_segment(colour = mycolors[i]) +
         # dummy segment to get y-axis limits correct
         geom_segment(data = data.frame(
             datetime = rep(as.POSIXct(strptime("2023-05-08", "%Y-%m-%d")), 2),
@@ -196,7 +199,7 @@ t4 <- ggplot(sequences_all[sequences_all$ftreatment == "4", ], aes(
     yend = y_condition_next,
     linetype = transition
 )) +
-    geom_segment(colour = palette.colors()[4]) +
+    geom_segment(colour = mycolors[4]) +
     # dummy segment to get y-axis limits correct
     geom_segment(data = data.frame(
         datetime = rep(as.POSIXct(strptime("2023-05-08", "%Y-%m-%d")), 2),
