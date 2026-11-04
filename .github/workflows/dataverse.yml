@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Dataverse Uploader Action
-        uses: IQSS/dataverse-uploader@v1.7
+        uses: ./.github/actions/dataverse
         with:
           DATAVERSE_TOKEN: ${{secrets.DATAVERSE_TOKEN}}
           DATAVERSE_SERVER: https://dataverse.harvard.edu
