@@ -1757,6 +1757,7 @@ ggplot(
         width = 0.5,
         position = position_dodge(width = 0.6)
     ) +
+    scale_y_discrete(limits = rev) +
     stat_summary(
         aes(shape = "mean"),
         fun.data = mean_cl_boot,

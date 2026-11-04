@@ -1,10 +1,15 @@
-Code in this folder goes with the manuscript submission "Seasonal temperature 
+Data and code here go with the accepted manuscript "Seasonal temperature 
 sequences drive divergent developmental trajectories in a species with an 
-extended breeding season".
+extended breeding season" by Hannah Yin and Volker H.W. Rudolf.
 
-Note: opening .csv files in Excel may for some reason change date formats from 
-YYYY-MM-DD to m/d/YYYY. Either adjust code accordingly below, or open .csv 
-files in another program or a raw text file editor if deciding to view!
+Dataset access and citation information on Harvard Dataverse: 
+https://doi.org/10.7910/DVN/CO3VBM
+
+Manuscript DOI: 10.1002/oik.12635
+
+Note: opening .csv files in Excel may change date formats from YYYY-MM-DD to 
+m/d/YYYY. Either adjust code accordingly where indicated in code files, or open
+.csv files in another program or a raw text file editor if deciding to view!
 
 
 RAW DATASETS
