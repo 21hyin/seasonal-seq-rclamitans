@@ -101,7 +101,6 @@ if __name__ == '__main__':
                 subdirs.remove('.git')
             if '.github' in subdirs:
                 subdirs.remove('.github')
-            print(f"  Directory: {root} (contains {len(files)} files)")
             for f in files:
                 upload_count += 1
                 full_path = join(root, f)
@@ -110,7 +109,6 @@ if __name__ == '__main__':
                 directory_label = root[repo_prefix_len:] if len(root) > repo_prefix_len else ""
                 print(f"    Uploading [{upload_count}]: {full_path}")
                 print(f"      Filename: {f}")
-                print(f"      Directory label: '{directory_label}'")
                 df = Datafile()
                 df.set({
                     "pid" : args.doi,
