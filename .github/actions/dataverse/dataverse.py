@@ -114,21 +114,21 @@ if __name__ == '__main__':
                 upload_count += 1
                 full_path = join(root, f)
                 # Remove the repo prefix from the directory label
-                repo_prefix_len = len(args.repo) + 1 if args.repo != '.' else 0
-                directory_label = root[repo_prefix_len:] if len(root) > repo_prefix_len else ""
+                directory_label = root.removeprefix('./repo')
                 print(f"    Uploading [{upload_count}]: {full_path}")
                 print(f"      Filename: {f}")
+                description = "Uploaded with GitHub Action"
+                if directory_label != "":
+                    description += " from {}.".format(args.repo)
                 df = Datafile()
                 df.set({
                     "pid" : args.doi,
                     "filename" : f,
                     "directoryLabel": directory_label,
-                    "description" : \
-                      "Uploaded with GitHub Action from {}.".format(
-                        args.repo),
+                    "description" : description
                     })
                 resp = api.upload_datafile(
-                    args.doi, join(root,f), df.json())
+                    args.doi, full_path, df.json())
                 print(f"      Response status: {resp.status_code}")
                 if resp.status_code not in [200, 201]:
                     print(f"      ERROR: {resp.text}")
