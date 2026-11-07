@@ -35,7 +35,8 @@ Raw data all located in datasets/raw folder
 
 5. Chamber water temperatures, including nine .csv files
 - water_temperatures/chamber/*
-in format [three-digit room number and letter] [season] temps [YYYY-MM-DD] through [YYYY-MM-DD].csv
+in format [three-digit room number and letter] [season] temps [YYYY-MM-DD] 
+through [YYYY-MM-DD].csv
 
 6. Larvae
 - tadpoles_midcensus.csv
