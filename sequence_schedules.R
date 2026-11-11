@@ -111,16 +111,16 @@ t1 <- ggplot(sequences_all[sequences_all$ftreatment == "1", ], aes(
     theme(
         plot.background = element_rect(fill = "transparent", color = NA),
         legend.background = element_rect(fill = "transparent", color = NA),
-        legend.title = element_text(size = rel(1.4)),
-        legend.text = element_text(size = rel(1.75)),
+        legend.title = element_text(size = rel(1.85)),
+        legend.text = element_text(size = rel(2)),
         legend.position = "inside",
         legend.position.inside = c(0.8, 0.8),
         legend.key.width = ggplot2::unit(1.5, "cm"),
-        axis.text.x = element_text(size = rel(1.5)),
-        axis.text.y = element_text(size = rel(1.5)),
+        axis.text.x = element_text(size = rel(2.25)),
+        axis.text.y = element_text(size = rel(2.25)),
         strip.background = element_blank(),
         strip.placement = "outside",
-        strip.text = element_text(size = rel(1.25))
+        strip.text = element_text(size = rel(1.75))
     ) +
     facet_wrap(
         vars(abiotic_factor),
@@ -174,11 +174,11 @@ plots <- sapply(2:3, function(i) {
         mytheme +
         theme(
             plot.background = element_rect(fill = "transparent", color = NA),
-            axis.text.x = element_text(size = rel(1.5)),
-            axis.text.y = element_text(size = rel(1.5)),
+            axis.text.x = element_text(size = rel(2.25)),
+            axis.text.y = element_text(size = rel(2.25)),
             strip.background = element_blank(),
             strip.placement = "outside",
-            strip.text = element_text(size = rel(1.25))
+            strip.text = element_text(size = rel(1.75))
         ) +
         facet_wrap(
             vars(abiotic_factor),
@@ -227,12 +227,12 @@ t4 <- ggplot(sequences_all[sequences_all$ftreatment == "4", ], aes(
     mytheme +
     theme(
         plot.background = element_rect(fill = "transparent", color = NA),
-        axis.title.x = element_text(size = rel(1.25)),
-        axis.text.x = element_text(size = rel(1.5)),
-        axis.text.y = element_text(size = rel(1.5)),
+        axis.title.x = element_text(size = rel(2)),
+        axis.text.x = element_text(size = rel(2.25)),
+        axis.text.y = element_text(size = rel(2.25)),
         strip.background = element_blank(),
         strip.placement = "outside",
-        strip.text = element_text(size = rel(1.25))
+        strip.text = element_text(size = rel(1.75))
     ) +
     facet_wrap(
         vars(abiotic_factor),
@@ -247,7 +247,7 @@ t4 <- ggplot(sequences_all[sequences_all$ftreatment == "4", ], aes(
 png(
     filename = file.path(DATA_OUT, "figure_1.png"),
     width = 6000,
-    height = 3600,
+    height = 4800,
     res = 300,
     bg = "transparent"
 )
